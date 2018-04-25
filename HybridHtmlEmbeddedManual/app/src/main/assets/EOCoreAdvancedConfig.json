@@ -16,7 +16,8 @@
   "ApplicationBackgroundTimeInterval": 60,
   "TurnOffCorrectOrientationUpdates": false,
   "DefaultOrientation": 0,
-  "LibraryVersion": "2.0.0.134",
+  "ApplicationInBackgroundEnabled": true,
+  "LibraryVersion": "2.0.0.137",
   "MessageVersion": "6.0.0.0",
   "MNCMCC": {
     "00": "N/A",
