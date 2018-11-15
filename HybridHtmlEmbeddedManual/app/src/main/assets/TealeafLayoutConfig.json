@@ -9,7 +9,7 @@
     "MainActivity": {
       "do": true,
       "screenViewName": "MainActivity",
-      "delay": 50,
+      "delay": 1000,
       "takeScreenShot": false
     }
   },

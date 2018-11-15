@@ -1,3 +1,9 @@
+/*******************************************************************************
+ * Licensed Materials - Property of IBM
+ * (C) Copyright IBM Corp. 2018
+ * US Government Users Restricted Rights - Use, duplication or disclosure
+ * restricted by GSA ADP Schedule Contract with IBM Corp.
+ ******************************************************************************/
 package tl.hybridhtmlembedded;
 
 import android.annotation.SuppressLint;
@@ -20,7 +26,6 @@ import java.lang.reflect.Method;
 
 public class MainActivity extends Activity {
     private String logicalPageName = "HybridAppActivity";
-    //private GestureDetectorCompat detector;
 
 	@SuppressLint("SetJavaScriptEnabled")
 	@Override
@@ -97,32 +102,7 @@ public class MainActivity extends Activity {
 		};
 		return onClickListener;
 	}
-	
-	/**
-     * {@inheritDoc}
-     */
-    protected void onPause() {
-        Tealeaf.onPause(this, logicalPageName);
-        super.onPause();
-    }
 
-    /**
-     * {@inheritDoc}
-     */
-    protected void onResume() {
-        Tealeaf.onResume(this, logicalPageName);
-        //detector = new GestureDetectorCompat(this, new TLGestureDetector(this));
-        super.onResume();
-    }
-
-    /**
-     * {@inheritDoc}
-     */
-    protected void onDestroy() {
-        Tealeaf.onDestroy(this, logicalPageName);
-        super.onDestroy();
-    }
-    
     /* Add touch event to collect gestures for Tealeaf.
      * 
      * (non-Javadoc)
