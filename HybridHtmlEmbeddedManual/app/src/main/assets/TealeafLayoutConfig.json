@@ -7,9 +7,9 @@
 {
   "AutoLayout": {
     "MainActivity": {
-      "do": true,
+      "do": false,
       "screenViewName": "MainActivity",
-      "delay": 50,
+      "delay": 2000,
       "takeScreenShot": false
     }
   },

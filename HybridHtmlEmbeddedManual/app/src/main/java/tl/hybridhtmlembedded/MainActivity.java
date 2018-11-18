@@ -97,31 +97,6 @@ public class MainActivity extends Activity {
 		};
 		return onClickListener;
 	}
-	
-	/**
-     * {@inheritDoc}
-     */
-    protected void onPause() {
-        Tealeaf.onPause(this, logicalPageName);
-        super.onPause();
-    }
-
-    /**
-     * {@inheritDoc}
-     */
-    protected void onResume() {
-        Tealeaf.onResume(this, logicalPageName);
-        //detector = new GestureDetectorCompat(this, new TLGestureDetector(this));
-        super.onResume();
-    }
-
-    /**
-     * {@inheritDoc}
-     */
-    protected void onDestroy() {
-        Tealeaf.onDestroy(this, logicalPageName);
-        super.onDestroy();
-    }
     
     /* Add touch event to collect gestures for Tealeaf.
      * 
