@@ -5,7 +5,7 @@
 * restricted by GSA ADP Schedule Contract with IBM Corp.
 ******************************************************************************/
 {
-  "LibraryVersion": "10.2.14",
+  "LibraryVersion": "10.2.15",
   "FilterMessageTypes": false,
   "MessageTypes": "4,5",
   "AddMessageTypeHeader": false,
