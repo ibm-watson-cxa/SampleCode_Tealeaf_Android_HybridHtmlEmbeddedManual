@@ -5,7 +5,7 @@
 * restricted by GSA ADP Schedule Contract with IBM Corp.
 ******************************************************************************/
 {
-  "LibraryVersion": "10.2.14",
+  "LibraryVersion": "10.2.15",
   "FilterMessageTypes": false,
   "MessageTypes": "4,5",
   "AddMessageTypeHeader": false,
@@ -27,7 +27,10 @@
   "KillSwitchDelay": 300,
   "GenerateImageMD5Hash": true,
   "SwitchWidth": 140,
-  "EnableActivityLifeCycleListener": true,
+  "EnableActivityLifeCycleListener": false,
   "UseXpathId": false,
-  "RemoveAllCookies": false
+  "RemoveAllCookies": false,
+  "ColorPrimary": "#3F51B5",
+  "ColorPrimaryDark": "#303F9F",
+  "ColorAccent": "#FF4081"
 }
