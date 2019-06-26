@@ -6,6 +6,7 @@
 ******************************************************************************/
 {
   "AutoLayout": {
+    "MainActivity": {
       "ScreenChange": true,
       "DisplayName": "MainActivity",
       "CaptureLayoutDelay": 1000
