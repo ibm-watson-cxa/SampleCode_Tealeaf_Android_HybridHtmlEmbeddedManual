@@ -7,10 +7,9 @@
 {
   "AutoLayout": {
     "MainActivity": {
-      "do": false,
-      "screenViewName": "MainActivity",
-      "delay": 2000,
-      "takeScreenShot": false
+      "ScreenChange": false,
+      "DisplayName": "MainActivity",
+      "CaptureLayoutDelay": 2000
     }
   },
   "AppendMapIds": {
