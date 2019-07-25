@@ -1,15 +1,26 @@
 /*******************************************************************************
 * Licensed Materials - Property of IBM
-* (C) Copyright IBM Corp. 2016
+* (C) Copyright IBM Corp. 2019
 * US Government Users Restricted Rights - Use, duplication or disclosure
 * restricted by GSA ADP Schedule Contract with IBM Corp.
 ******************************************************************************/
 {
   "AutoLayout": {
+    "IBMGlobalScreenSettings":{
+      "ScreenChange": true,
+      "DisplayName": "",
+      "CaptureLayoutDelay": 0,
+      "ScreenShot": false,
+      "NumberOfWebViews": 0,
+      "CaptureUserEvents": true,
+      "CaptureScreenVisits": true,
+      "CaptureLayoutOn": 2,
+      "CaptureScreenshotOn": 0
+    },
     "MainActivity": {
-      "do": false,
-      "screenViewName": "MainActivity",
-      "delay": 2000
+      "ScreenChange": true,
+      "DisplayName": "MainActivity",
+      "CaptureLayoutDelay": 1000
     }
   },
   "AppendMapIds": {
