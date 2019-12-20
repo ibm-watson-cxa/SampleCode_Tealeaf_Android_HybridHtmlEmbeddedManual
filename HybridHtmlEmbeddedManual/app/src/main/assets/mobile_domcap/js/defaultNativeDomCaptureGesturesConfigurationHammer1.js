@@ -87,7 +87,7 @@
                  queues: [
                           {
                           qid: "DEFAULT",
-                          endpoint: "/TealeafTarget.php",
+                          endpoint: "",
                           maxEvents: 50,
                           timerInterval: 300000,
                           maxSize: 500,
