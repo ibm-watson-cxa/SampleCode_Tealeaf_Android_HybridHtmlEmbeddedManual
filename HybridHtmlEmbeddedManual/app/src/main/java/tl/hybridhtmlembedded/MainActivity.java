@@ -17,6 +17,8 @@ import android.view.View;
 import android.view.View.OnClickListener;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
+import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.ZoomButtonsController;
 
 import com.ibm.eo.util.LogInternal;
@@ -25,8 +27,6 @@ import com.tl.uic.Tealeaf;
 import java.lang.reflect.Method;
 
 public class MainActivity extends Activity {
-    private String logicalPageName = "HybridAppActivity";
-
 	@SuppressLint("SetJavaScriptEnabled")
 	@Override
 	protected void onCreate(Bundle savedInstanceState) {
@@ -37,13 +37,13 @@ public class MainActivity extends Activity {
         
         super.onCreate(savedInstanceState);
         setContentView(R.layout.main);
-        createWebView(R.id.myWebView1, "file:///android_asset/mobile_domcap/embeddedAppsMenu.html");
-//        createWebView(R.id.myWebView2, "file:///android_asset/mobile_domcap/embeddedGesturesMenu.html");
+        createWebView(R.id.myWebView1, "file:///android_asset/mobile_domcap/embeddedGesturesMenu.html");
+        createWebView(R.id.myWebView2, "file:///android_asset/mobile_domcap/embeddedGesturesMenu.html");
         
-//        Button button = (Button) findViewById(R.id.button1);
-//        button.setOnClickListener(getOnClickListener());
-//        CheckBox checkBox = (CheckBox) findViewById(R.id.checkBox1);
-//        checkBox.setOnClickListener(getOnClickListener());
+        Button button = (Button) findViewById(R.id.button1);
+        button.setOnClickListener(getOnClickListener());
+        CheckBox checkBox = (CheckBox) findViewById(R.id.checkBox1);
+        checkBox.setOnClickListener(getOnClickListener());
         
         if (VERSION.SDK_INT >= VERSION_CODES.HONEYCOMB) {
             ActionBar actionBar = getActionBar();
@@ -51,8 +51,6 @@ public class MainActivity extends Activity {
                 actionBar.hide();
             }
         }
-
-        Tealeaf.logScreenLayout(this, logicalPageName, 2000);
 	}
 	
 	@SuppressLint("SetJavaScriptEnabled")
