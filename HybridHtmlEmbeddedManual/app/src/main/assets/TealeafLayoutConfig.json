@@ -20,7 +20,8 @@
     "MainActivity": {
       "ScreenChange": true,
       "DisplayName": "MainActivity",
-      "CaptureLayoutDelay": 1000
+      "CaptureLayoutDelay": 1000,
+      "NumberOfWebViews": 2
     }
   },
   "AppendMapIds": {
