@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019 Acoustic, L.P. All rights reserved.
+ * Copyright (c) 2020 Acoustic, L.P. All rights reserved.
  *
  * NOTICE: This file contains material that is confidential and proprietary to
  * Acoustic, L.P. and/or other developers. No license is granted under any intellectual or
@@ -11,7 +11,7 @@
 
 /**
  * @fileOverview The Gesture module implements the logic for capturing Hammer.js gesture events.
- * @version 5.6.0.1875
+ * @version 5.7.0.1915
  * @exports gesture
  */
 

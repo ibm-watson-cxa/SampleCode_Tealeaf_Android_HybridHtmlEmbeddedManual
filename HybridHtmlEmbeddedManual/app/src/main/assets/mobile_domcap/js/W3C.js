@@ -1,5 +1,5 @@
 /*!
- * Copyright (c) 2019 Acoustic, L.P. All rights reserved.
+ * Copyright (c) 2020 Acoustic, L.P. All rights reserved.
  *
  * NOTICE: This file contains material that is confidential and proprietary to
  * Acoustic, L.P. and/or other developers. No license is granted under any intellectual or
@@ -7,7 +7,7 @@
  * Acoustic, L.P. Any unauthorized copying or distribution of content from this file is
  * prohibited.
  *
- * @version 5.6.0.1875
+ * @version 5.7.0.1915
  * @flags w3c,NDEBUG
  */
 
@@ -126,6 +126,8 @@ window.TLT = (function () {
 
     var tltStartTime = (new Date()).getTime(),
         tltPageId,
+
+        tltTabId,
 
         /**
          * A collection of module information. The keys in this object are the
@@ -503,6 +505,8 @@ window.TLT = (function () {
          */
         bridgeCallbacks = {},
 
+        mutationCallbacks = [],
+
         /**
          * init implementation (defined later)
          * @private
@@ -611,6 +615,79 @@ window.TLT = (function () {
             return hasExcluded;
         },
 
+        /**
+         * Returns the tab id from session storage if it exists.
+         * If not, searches the local storage for the previous tab id of the tealeaf session.
+         */
+        getTabIndex = function () {
+            var tabId,
+                sessionId,
+                localTabId,
+                localSessionId,
+                sessionIdUsesStorage = utils.getValue(coreConfig, "sessionIDUsesStorage", false),
+                sessionIdUsesCookie = utils.getValue(coreConfig, "sessionIDUsesCookie", true),
+                tltCookieName = coreConfig.sessionizationCookieName || "TLTSID",
+                item,
+                sidKey = "tltTabSid",
+                tabIdKey = "tltTabId",
+                unloadKey = "tltUnload";
+
+            // Catch exception if storage is disabled.
+            try {
+                if (!sessionStorage || !localStorage) {
+                    return 0;
+                }
+            } catch (e) {
+                return 0;
+            }
+            // Get current session id.
+            if (sessionIdUsesStorage) {
+                item = localStorage.getItem(tltCookieName);
+                if (item) {
+                    sessionId = item.split("|")[1];
+                }
+            }
+            if (!sessionId && sessionIdUsesCookie) {
+                sessionId = utils.getCookieValue(tltCookieName);
+            }
+            // If tab is not reloading, clear storage tab id to prevent copying itself to a duplicate tab.
+            if (sessionStorage.getItem(unloadKey) === null) {
+                sessionStorage.removeItem(tabIdKey);
+            }
+            sessionStorage.removeItem(unloadKey);
+
+            // Get current tab id.
+            tabId = sessionStorage.getItem(tabIdKey);
+
+            // Get previous session id, tab id.
+            localSessionId = localStorage.getItem(sidKey);
+            localTabId = localStorage.getItem(tabIdKey);
+
+            if (tabId === null) {
+                if (localTabId === null) {
+                    tabId = 1;
+                } else {
+                    // If the current and previous session ids are the same, increment tab id counter. Otherwise reset to 1.
+                    if (sessionId === localSessionId) {
+                        tabId = parseInt(localTabId, 10) + 1;
+                    } else {
+                        tabId = 1;
+                    }
+                }
+                // Save the new tab id.
+                localStorage.setItem(tabIdKey, tabId);
+                sessionStorage.setItem(tabIdKey, tabId);
+
+                // Save the new session id.
+                if (sessionId) {
+                    localStorage.setItem(sidKey, sessionId);
+                }
+            } else {
+                tabId = parseInt(tabId, 10);
+            }
+            return tabId;
+        },
+
         // main interface for the core
         core = /**@lends TLT*/ {
 
@@ -645,10 +722,17 @@ window.TLT = (function () {
             },
 
             /**
+             * @returns {integer} Returns the tab id.
+             */
+            getTabId: function () {
+                return tltTabId;
+            },
+
+            /**
              * @returns {String} The library version string.
              */
             getLibraryVersion: function () {
-                return "5.6.0.1875";
+                return "5.7.0.1915";
             },
 
             /**
@@ -730,6 +814,9 @@ window.TLT = (function () {
                             window.detachEvent("onload", timeoutCallback);
                         }
                         _init(config, callback);
+
+                        // Set the tab id.
+                        tltTabId = getTabIndex();
                     }
                 };
 
@@ -1412,7 +1499,8 @@ window.TLT = (function () {
                     cb = null,
                     cbEntry,
                     cbList,
-                    cbListLen;
+                    cbListLen,
+                    utils = TLT.utils;
 
                 // Sanity check
                 if (!callbacks) {
@@ -1456,6 +1544,86 @@ window.TLT = (function () {
                     return false;
                 }
                 return true;
+            },
+
+            /**
+             * Public API for registering a mutation callback function.
+             * @param {object} cb Callback function.
+             * @param {boolean} register Register the callback if true.  Unregister if false.
+             * @returns {boolean} true if callback is registered, false otherwise.
+             */
+            registerMutationCallback: function (cb, register) {
+                var i;
+
+                // Sanity check
+                if (!cb || typeof cb !== "function") {
+                    return false;
+                }
+
+                // If true, add callback if it was not added before.  Otherwise remove callback.
+                if (register) {
+                    i = mutationCallbacks.indexOf(cb);
+                    if (i === -1) {
+                        mutationCallbacks.push(cb);
+                    }
+                } else {
+                    // Remove callback if found.
+                    i = mutationCallbacks.indexOf(cb);
+                    if (i !== -1) {
+                        mutationCallbacks.splice(i--, 1);
+                    }
+                }
+                return true;
+            },
+
+            /**
+             * Gets the mutated documents and nodes from the records
+             * and invokes the registered callback functions.
+             * @param {Array} records List of mutation record objects.
+             */
+            invokeMutationCallbacks: function (records) {
+                var i,
+                    cb,
+                    doc,
+                    target,
+                    map,
+                    documents = [],
+                    nodes = [];
+
+                // Sanity check
+                if (mutationCallbacks.length === 0) {
+                    return;
+                }
+                // Use map keys to avoid duplicates
+                if (Map) {
+                    map = new Map();
+                } else {
+                    map = new utils.WeakMap();
+                }
+                // Get mutated documents and nodes
+                for (i = 0; i < records.length; i++) {
+                    target = records[i].target;
+                    if (target) {
+                        doc = utils.getDocument(target);
+
+                        // If doc was not seen before, add it
+                        if (map.get(doc) === undefined) {
+                            if (doc.host) {
+                                nodes.push(doc);
+                            } else {
+                                documents.push(doc);
+                            }
+                            map.set(doc, true);
+                        }
+                    }
+                }
+                map.clear();
+
+                // Invoke callbacks
+                for (i = 0; i < mutationCallbacks.length; i++) {
+                    cb = mutationCallbacks[i];
+                    cb(records, documents, nodes);
+                }
             },
 
             /**
@@ -2415,9 +2583,7 @@ window.TLT = (function () {
      * @see TLT.init
      */
     _init = function (config, callback) {
-        var event,
-            webEvent,
-            cookieModuleConfig,
+        var cookieModuleConfig,
             queueServiceConfig,
             queues,
             sessionCookieName,
@@ -2425,7 +2591,10 @@ window.TLT = (function () {
             endpointURL,
             killswitchURL,
             pageURL = null,
-            i;
+            i,
+            eventName,
+            eventTarget,
+            screenviewLoadHandler;
 
         if (initialized) {
             utils.clog("TLT.init() called more than once. Ignoring.");
@@ -2548,29 +2717,51 @@ window.TLT = (function () {
             }
         }
 
-        //generate fake load event to send for modules
-        event = {
-            type: 'load',
-            target: window.window,
-            srcElement: window.window,
-            currentTarget: window.window,
-            bubbles: true,
-            cancelBubble: false,
-            cancelable: true,
-            timeStamp: +new Date(),
-            customLoad: true
+        screenviewLoadHandler = function (e) {
+            var event, webEvent;
+
+            event = {
+                type: 'load',
+                target: window.window,
+                srcElement: window.window,
+                currentTarget: window.window,
+                bubbles: true,
+                cancelBubble: false,
+                cancelable: true,
+                timeStamp: +new Date(),
+                customLoad: true
+            };
+
+            webEvent = new browserBaseService.WebEvent(event);
+            core._publishEvent(webEvent);
+
+            if (e) {
+                browserService.unsubscribe(eventName, eventTarget, screenviewLoadHandler);
+            }
         };
 
-        webEvent = new browserBaseService.WebEvent(event);
-        core._publishEvent(webEvent);
+        //generate fake load event to send for modules
+        if (coreConfig.screenviewLoadEvent) {
+            eventName = coreConfig.screenviewLoadEvent.name;
+            eventTarget = coreConfig.screenviewLoadEvent.target || window;
+            browserService.subscribe(eventName, eventTarget, screenviewLoadHandler);
+        } else {
+            screenviewLoadHandler();
+        }
+
+        // Set state and inactivity timer on successful initialization
+        if (core.isInitialized()) {
+            state = "initialized";
+            resetInactivityTimer();
+        }
 
         // Notify callback function if any...
         if (typeof _callback === "function") {
             // Protect against unexpected exceptions since _callback is 3rd party code.
             try {
-                _callback("initialized");
+                _callback(state);
             } catch (e2) {
-                // Do nothing!
+                utils.clog("Error in callback.", e2);
             }
         }
     };
@@ -2604,7 +2795,7 @@ window.TLT = (function () {
 }());
 
 /**
- * Copyright (c) 2019 Acoustic, L.P. All rights reserved.
+ * Copyright (c) 2020 Acoustic, L.P. All rights reserved.
  *
  * NOTICE: This file contains material that is confidential and proprietary to
  * Acoustic, L.P. and/or other developers. No license is granted under any intellectual or
@@ -3249,6 +3440,11 @@ window.TLT = (function () {
                     }
                 }
 
+                // Indicate if any element is disabled
+                if (state && target.disabled) {
+                    state.disabled = true;
+                }
+
                 return state;
             },
 
@@ -3288,7 +3484,6 @@ window.TLT = (function () {
                     temp,
                     search,
                     searchParams,
-                    isSupported = true,
                     key,
                     value,
                     queryArray = [],
@@ -3319,14 +3514,10 @@ window.TLT = (function () {
                 search = location.search || "";
                 try {
                     searchParams = new URLSearchParams(search);
-                } catch (error) {
-                    isSupported = false;
-                }
-                if (isSupported) {
                     searchParams.forEach(function (value, key) {
                         queryParamsTmp[key] = value;
                     });
-                } else {
+                } catch (e) {
                     // URLSearchParams is not supported, parse queries manually
                     if (search.length > 1 && search.charAt(0) === '?') {
                         queryArray = decodeURIComponent(search).substring(1).split("&");
@@ -3570,8 +3761,8 @@ window.TLT = (function () {
                     }
                 }
 
-                // Try to set the cookie with two domain components. e.g. "ibm.com".
-                // If not successful try with three domain components, e.g. "ibm.co.uk" and so on.
+                // Try to set the cookie with two domain components. e.g. "foo.com".
+                // If not successful try with three domain components, e.g. "foo.co.uk" and so on.
                 for (len = domainArray.length, i = (len === 1 ? 1 : 2); i <= len; i += 1) {
                     document.cookie = cookieName + "=" + cookieValue + ";domain=" + domainArray.slice(-i).join('.') + pathStr + maxAgeStr + secureStr;
                     if (this.getCookieValue(cookieName) === cookieValue) {
@@ -3838,7 +4029,7 @@ window.TLT = (function () {
 }());
 
 /**
- * Copyright (c) 2019 Acoustic, L.P. All rights reserved.
+ * Copyright (c) 2020 Acoustic, L.P. All rights reserved.
  *
  * NOTICE: This file contains material that is confidential and proprietary to
  * Acoustic, L.P. and/or other developers. No license is granted under any intellectual or
@@ -3952,7 +4143,7 @@ window.TLT = (function () {
 
 }());
 /**
- * Copyright (c) 2019 Acoustic, L.P. All rights reserved.
+ * Copyright (c) 2020 Acoustic, L.P. All rights reserved.
  *
  * NOTICE: This file contains material that is confidential and proprietary to
  * Acoustic, L.P. and/or other developers. No license is granted under any intellectual or
@@ -4117,7 +4308,15 @@ TLT.ModuleContext = (function () {
          * @function
          * @returns {object} Returns session start.
          */
-        "getSessionStart"
+        "getSessionStart",
+
+        /**
+         * @name getTabId
+         * @memberOf TLT.ModuleContext#
+         * @function
+         * @returns {object} Returns tab id.
+         */
+        "getTabId"
     ];
 
     /**
@@ -4172,8 +4371,9 @@ TLT.ModuleContext = (function () {
     };
 
 }());
+
 /**
- * Copyright (c) 2019 Acoustic, L.P. All rights reserved.
+ * Copyright (c) 2020 Acoustic, L.P. All rights reserved.
  *
  * NOTICE: This file contains material that is confidential and proprietary to
  * Acoustic, L.P. and/or other developers. No license is granted under any intellectual or
@@ -4312,7 +4512,7 @@ TLT.addService("config", function (core) {
 
 });
 /**
- * Copyright (c) 2019 Acoustic, L.P. All rights reserved.
+ * Copyright (c) 2020 Acoustic, L.P. All rights reserved.
  *
  * NOTICE: This file contains material that is confidential and proprietary to
  * Acoustic, L.P. and/or other developers. No license is granted under any intellectual or
@@ -4370,6 +4570,8 @@ TLT.addService("queue", function (core) {
         },
         xhrLog       = [],
         isInitialized = false,
+        isSerializedPost = true,
+        isLastPostComplete = true,
         queueManager = (function () {
             var queues = {};
 
@@ -4558,6 +4760,9 @@ TLT.addService("queue", function (core) {
      * @name queueService-handleXhrCallback
      */
     function handleXhrCallback(result) {
+        if (isSerializedPost) {
+            isLastPostComplete = true;
+        }
 
         if (result && result.id) {
             // Diagnostic logging
@@ -4571,11 +4776,12 @@ TLT.addService("queue", function (core) {
     }
 
     /**
-    * Get the path relative to the host.
-    * @addon
-    */
+     * Get the URL path.
+     * @addon
+     */
     function getUrlPath() {
-        return window.location.pathname;
+        var urlInfo = utils.getOriginAndPath(window.location);
+        return core.normalizeUrl(urlInfo.path);
     }
 
     /**
@@ -4754,7 +4960,7 @@ TLT.addService("queue", function (core) {
             httpHeaders = {
                 "Content-Type": "application/json",
                 "X-PageId": core.getPageId(),
-                "X-Tealeaf": "device (UIC) Lib/5.6.0.1875",
+                "X-Tealeaf": "device (UIC) Lib/5.7.0.1915",
                 "X-TealeafType": "GUI",
                 "X-TeaLeaf-Page-Url": getUrlPath(),
                 "X-Tealeaf-SyncXHR": (!!sync).toString()
@@ -4779,6 +4985,9 @@ TLT.addService("queue", function (core) {
         if (timeDiff > (inactivityTimeout + 60000)) {
             return;
         }
+
+        isLastPostComplete = false;
+
         queue.lastOffset = data[count - 1].offset;
 
         // Summarize all the message types in the data
@@ -4837,10 +5046,22 @@ TLT.addService("queue", function (core) {
                 retObj = eS.encode(data, contentEncoder);
                 if (retObj) {
                     if (retObj.data && !retObj.error) {
-                        data = retObj.data;
-                        httpHeaders["Content-Encoding"] = retObj.encoding;
-                    } else {
-                        data = retObj.error;
+                        if (!(retObj.data instanceof window.ArrayBuffer)) {
+                            retObj.error = "Encoder did not apply " + contentEncoder + " encoding.";
+                        } else {
+                            if (retObj.data.byteLength < data.length) {
+                                data = retObj.data;
+                                httpHeaders["Content-Encoding"] = retObj.encoding;
+                            } else {
+                                // Encoder succeeded but resulting size was the same or greater than original payload
+                                retObj.error = contentEncoder + " encoder did not reduce payload (" + retObj.data.byteLength + ") compared to original data (" + data.length + ")";
+                            }
+                        }
+                    }
+
+                    // Log encoder error as an exception message
+                    if (retObj.error) {
+                        core.logExceptionEvent("EncoderError: " + retObj.error, "UIC", -1);
                     }
                 }
             }
@@ -4869,6 +5090,7 @@ TLT.addService("queue", function (core) {
                         return;
                     }
                 }
+                isLastPostComplete = true;
             } else {
                 aS.sendRequest({
                     id: messageId,
@@ -4931,6 +5153,11 @@ TLT.addService("queue", function (core) {
 
         len = queueManager.push(queueId, msg);
         size = queue.size;
+
+        // enable serialized post from client
+        if (isSerializedPost && !isLastPostComplete) {
+            return;
+        }
 
         if ((len >= queue.eventThreshold || size >= queue.sizeThreshold) &&
                 autoFlushing && core.getState() !== "unloading") {
@@ -5014,7 +5241,7 @@ TLT.addService("queue", function (core) {
 
     function setFlushTimer(qid, interval) {
         queueTimers[qid] = window.setTimeout(function tick() {
-            if (autoFlushing) {
+            if (autoFlushing && (!isSerializedPost || (isSerializedPost && isLastPostComplete))) {
                 flushQueue(qid);
             }
             queueTimers[qid] = window.setTimeout(tick, interval);
@@ -5082,6 +5309,7 @@ TLT.addService("queue", function (core) {
         CONFIG = config;
         coreConfig = core.getCoreConfig();
         inactivityTimeout = utils.getValue(coreConfig, "inactivityTimeout", 600000);
+        isSerializedPost = utils.getValue(CONFIG, "serializePost", true);
 
         utils.forEach(CONFIG.queues, function (conf, i) {
             var crossDomainIFrame = null;
@@ -5226,7 +5454,7 @@ TLT.addService("queue", function (core) {
 });
 
 /**
- * Copyright (c) 2019 Acoustic, L.P. All rights reserved.
+ * Copyright (c) 2020 Acoustic, L.P. All rights reserved.
  *
  * NOTICE: This file contains material that is confidential and proprietary to
  * Acoustic, L.P. and/or other developers. No license is granted under any intellectual or
@@ -5264,6 +5492,7 @@ TLT.addService("browserBase", function (core) {
         config,
         blacklist,
         customid,
+        normalizeTargetToParentLink,
         getXPathListFromNode,
         isInitialized = false;
 
@@ -5272,8 +5501,9 @@ TLT.addService("browserBase", function (core) {
         serializerService = core.getService("serializer");
         // Need to check for configService in unit testing scenario
         config = configService ? configService.getServiceConfig("browser") : {};
-        blacklist = config.hasOwnProperty("blacklist") ? config.blacklist : [];
-        customid = config.hasOwnProperty("customid") ? config.customid : [];
+        blacklist = config.blacklist || [];
+        customid = config.customid || [];
+        normalizeTargetToParentLink = utils.getValue(config, "normalizeTargetToParentLink", true);
     }
 
     function initBrowserBase() {
@@ -5427,8 +5657,7 @@ TLT.addService("browserBase", function (core) {
     getXPathListFromNode = (function () {
 
         var specialChildNodes = {
-                "nobr": true,
-                "p": true
+                "nobr": true
             };
 
         /**
@@ -5455,11 +5684,30 @@ TLT.addService("browserBase", function (core) {
                 setHost = false,
                 shadowRoot;
 
+            // Sanity check
+            if (!node || !node.nodeType) {
+                return xpath;
+            }
+
+            // Calculate xpath of the host element for document-fragment nodes.
+            if (node.nodeType === 11) {
+                node = node.host;
+                if (node) {
+                    setHost = true;
+                } else {
+                    return xpath;
+                }
+            }
+
             while (loop) {
                 // Need to continue the loop incase of elements in frame/iframe and shadow trees.
                 loop = false;
 
                 tagName = utils.getTagName(node);
+                if (tagName === "window") {
+                    continue;
+                }
+
                 if (tagName && !setHost) {
                     // Fix to handle tags that are not normally visual elements
                     if (specialChildNodes[tagName]) {
@@ -5541,11 +5789,16 @@ TLT.addService("browserBase", function (core) {
                         loop = true;
                         node = utils.getWindow(node).frameElement;
                     } else if (!notInDocument && !documentElement.contains(node)) {
-                        // For elements within a Shadow DOM tree, continue the loop after resetting node to the shadow host element.
-                        loop = true;
-                        shadowRoot = node.getRootNode();
-                        node = shadowRoot.host;
-                        setHost = true;
+                        // The node is not inside the document, check if it could be in Shadow DOM
+                        if (node.getRootNode) {
+                            shadowRoot = node.getRootNode();
+                            if (shadowRoot) {
+                                // For elements within a Shadow DOM tree, continue the loop after resetting node to the shadow host element.
+                                node = shadowRoot.host;
+                                setHost = true;
+                                loop = true;
+                            }
+                        }
                     }
                 }
             }
@@ -5746,7 +5999,7 @@ TLT.addService("browserBase", function (core) {
             eventPath = event.composedPath();
             if (eventPath && eventPath.length) {
                 target = eventPath[0];
-                if (config.normalizeTargetToNearestLink) {
+                if (normalizeTargetToParentLink) {
                     // Switch target to the link element in the path (if any)
                     for (i = 0, len = eventPath.length; i < len; i += 1) {
                         if (utils.getTagName(eventPath[i]) === "a") {
@@ -6311,6 +6564,7 @@ TLT.addService("browserBase", function (core) {
         var fullXpath = "",
             fullXpathList = [],
             topElem,
+            lastElem,
             xpath = "",
             xpathList = [];
 
@@ -6349,6 +6603,10 @@ TLT.addService("browserBase", function (core) {
 
         this.fullXpath = xpathListToString(fullXpathList);
         this.fullXpathList = fullXpathList;
+
+        lastElem = fullXpathList[fullXpathList.length - 1];
+        // Is this xpath pointing to a host node?
+        this.isShadowHost = lastElem ? lastElem[lastElem.length - 1] === "h" : false;
 
         /**
          *
@@ -6494,7 +6752,7 @@ TLT.addService("browserBase", function (core) {
 
 });
 /**
- * Copyright (c) 2019 Acoustic, L.P. All rights reserved.
+ * Copyright (c) 2020 Acoustic, L.P. All rights reserved.
  *
  * NOTICE: This file contains material that is confidential and proprietary to
  * Acoustic, L.P. and/or other developers. No license is granted under any intellectual or
@@ -6759,10 +7017,10 @@ TLT.addService("browser", function (core) {
          */
         query: function (query, scope, type) {
             try {
-                return queryDom.find(query, scope, type)[0] || null;
-            } catch (err) {
-                return [];
-            }
+				return queryDom.find(query, scope, type)[0] || null;
+			} catch (err) {
+				return [];
+			}
         },
 
         /**
@@ -6775,12 +7033,12 @@ TLT.addService("browser", function (core) {
          * @return {Object[]|Array}       An array of HTML elements matching the query
          *     or and empty array if no elements are matching.
          */
-        queryAll: function (query, scope, type) {
+		queryAll: function (query, scope, type) {
             try {
-                return queryDom.find(query, scope, type);
-            } catch (err) {
-                return [];
-            }
+				return queryDom.find(query, scope, type);
+			} catch (err) {
+				return [];
+			}
         },
 
         /**
@@ -6814,7 +7072,7 @@ TLT.addService("browser", function (core) {
     };
 });
 /**
- * Copyright (c) 2019 Acoustic, L.P. All rights reserved.
+ * Copyright (c) 2020 Acoustic, L.P. All rights reserved.
  *
  * NOTICE: This file contains material that is confidential and proprietary to
  * Acoustic, L.P. and/or other developers. No license is granted under any intellectual or
@@ -6935,8 +7193,14 @@ TLT.addService("ajax", function (core) {
             };
 
             if (result.success) {
-                response.json().then(function (responseData) {
-                    result.data = responseData;
+                response.text().then(function (responseData) {
+                    try {
+                        // Parse into JSON if possible.
+                        result.data = JSON.parse(responseData);
+                    } catch (e) {
+                        // Else send raw text
+                        result.data = responseData;
+                    }
                     oncomplete(result);
                 })["catch"](function (e) {
                     // NOTE: YUICompressor incompatibility with .catch resolved by using ["catch"]
@@ -6944,6 +7208,8 @@ TLT.addService("ajax", function (core) {
                     result.statusText = e.message;
                     oncomplete(result);
                 });
+            } else {
+                oncomplete(result);
             }
         })["catch"](function (e) {
             // NOTE: YUICompressor incompatibility with .catch resolved by using ["catch"]
@@ -7194,7 +7460,7 @@ TLT.addService("ajax", function (core) {
     };
 });
 /**
- * Copyright (c) 2019 Acoustic, L.P. All rights reserved.
+ * Copyright (c) 2020 Acoustic, L.P. All rights reserved.
  *
  * NOTICE: This file contains material that is confidential and proprietary to
  * Acoustic, L.P. and/or other developers. No license is granted under any intellectual or
@@ -7258,6 +7524,7 @@ TLT.addService("domCapture", function (core) {
         getDOMCapture = function () {},
         updateConfig = function () {},
         publishEvent = core._publishEvent,
+        lazyload = false,
         utils = core.utils;
 
     /**
@@ -7638,10 +7905,41 @@ TLT.addService("domCapture", function (core) {
             if (records) {
                 processMutationRecords(records);
                 utils.clog("Processed [" + records.length + "] mutation records.");
+                core.invokeMutationCallbacks(records);
             }
         });
 
         return observer;
+    }
+
+    /**
+     * Starts the observer.
+     */
+    function startObserver() {
+        var attachShadow = Element.prototype.attachShadow;
+
+        if (!diffObserver) {
+            return null;
+        }
+        // Observe main window
+        diffObserver.observe(window.document, diffObserverConfig);
+
+        // Observe shadow dom
+        if (utils.getValue(dcServiceConfig, "options.captureShadowDOM", false)) {
+            Element.prototype.attachShadow = function (option) {
+                var sh = attachShadow.call(this, option);
+
+                if (this.shadowRoot) {
+                    diffObserver.observe(this.shadowRoot, diffObserverConfig);
+                }
+                return sh;
+            };
+        }
+
+        // Set flag to start observing frame windows
+        lazyload = true;
+
+        return diffObserver;
     }
 
     /**
@@ -7676,12 +7974,14 @@ TLT.addService("domCapture", function (core) {
             observedWindowList.push(window);
         }
 
-        isCaptureShadowDOMEnabled = dcServiceConfig.options.captureShadowDOM = false;
-
+        isCaptureShadowDOMEnabled = dcServiceConfig.options.captureShadowDOM;
         // Only browsers having native Shadow DOM support could work with Shadow DOM Capture and DOM Diff technology.
         // Disable Shadow DOM Capture if browser doesn't have such support.
-        if (isCaptureShadowDOMEnabled && (Element.prototype.attachShadow || '').toString().indexOf("[native code]") < 0) {
+        if (isCaptureShadowDOMEnabled &&
+                !(window.ShadyDOM && window.ShadyDOM.inUse) &&
+                (Element.prototype.attachShadow || '').toString().indexOf("[native code]") < 0) {
             dcServiceConfig.options.captureShadowDOM = false;
+            isCaptureShadowDOMEnabled = false;
         }
 
         if (isCaptureShadowDOMEnabled) {
@@ -7700,6 +8000,8 @@ TLT.addService("domCapture", function (core) {
                 }
             }
         }
+
+        startObserver();
 
         isInitialized = true;
     }
@@ -8394,6 +8696,10 @@ TLT.addService("domCapture", function (core) {
         for (i = 0, len = mutatedTargets.length; i < len; i += 1) {
             targetXpath = mutatedTargets[i];
             target = browserBaseService.getNodeFromID(targetXpath.xpath, -2);
+            // If the target xpath is pointing to a shadow host
+            if (targetXpath.isShadowHost) {
+                target = target.shadowRoot;
+            }
             if (target === window.document.body) {
                 // If diff includes the document body, then send the full DOM instead.
                 options.captureShadowDOM = captureShadowDOM;
@@ -8541,7 +8847,7 @@ TLT.addService("domCapture", function (core) {
         }
 
         // Capture any shadow DOM trees
-        if (0 && !!options.captureShadowDOM) {
+        if (!!options.captureShadowDOM) {
             shadowDOMObj = getShadowDOM(root, rootCopy, options);
         }
 
@@ -8618,6 +8924,10 @@ TLT.addService("domCapture", function (core) {
 
             if (utils.indexOf(observedWindowList, win) === -1) {
                 observedWindowList.push(win);
+
+                if (diffObserver && lazyload) {
+                    diffObserver.observe(win.document, diffObserverConfig);
+                }
             }
         },
 
@@ -8706,7 +9016,7 @@ TLT.addService("domCapture", function (core) {
 });
 
 /**
- * Copyright (c) 2019 Acoustic, L.P. All rights reserved.
+ * Copyright (c) 2020 Acoustic, L.P. All rights reserved.
  *
  * NOTICE: This file contains material that is confidential and proprietary to
  * Acoustic, L.P. and/or other developers. No license is granted under any intellectual or
@@ -8840,7 +9150,7 @@ TLT.addService("encoder", function (core) {
 
             // Sanity check
             if (typeof encoder.encode !== "function") {
-                returnObj.error = "Configured encoder (" + type + ") encode method is not a function.";
+                returnObj.error = "Configured encoder (" + type + ") 'encode' method is not a function.";
                 return returnObj;
             }
 
@@ -8848,7 +9158,7 @@ TLT.addService("encoder", function (core) {
                 // Invoke the encode method of the encoder and return the result.
                 result = encoder.encode(data);
             } catch (e) {
-                returnObj.error = "Encoding failed: " + (e.name ? e.name + " - " : "") + e.message;
+                returnObj.error = "Exception " + (e.name ? e.name + " - " : "") + (e.message || e);
                 return returnObj;
             }
 
@@ -8866,7 +9176,7 @@ TLT.addService("encoder", function (core) {
 
 });
 /**
- * Copyright (c) 2019 Acoustic, L.P. All rights reserved.
+ * Copyright (c) 2020 Acoustic, L.P. All rights reserved.
  *
  * NOTICE: This file contains material that is confidential and proprietary to
  * Acoustic, L.P. and/or other developers. No license is granted under any intellectual or
@@ -8924,7 +9234,8 @@ TLT.addService("message", function (core) {
         startWidth = window.innerWidth || document.documentElement.clientWidth,
         startHeight = window.innerHeight || document.documentElement.clientHeight,
         isInitialized = false,
-        shadowMessageCache = {};
+        shadowMessageCache = {},
+        isShadowDomCacheEnabled = false;
 
 
     /**
@@ -9185,7 +9496,7 @@ TLT.addService("message", function (core) {
             currState;
 
         // Sanity check
-        if (!target || (!target.currState && !target.prevState)) {
+        if (!target || (!target.currState && !target.prevState) || !target.id) {
             return target;
         }
 
@@ -9196,8 +9507,12 @@ TLT.addService("message", function (core) {
             mask = privacy[i];
             exclude = utils.getValue(mask, "exclude", false);
             if (matchesTarget(mask.targets, target) !== exclude) {
-                applyMask(mask, prevState);
-                applyMask(mask, currState);
+                if (prevState && prevState.hasOwnProperty("value")) {
+                    applyMask(mask, prevState);
+                }
+                if (currState && currState.hasOwnProperty("value")) {
+                    applyMask(mask, currState);
+                }
                 maskApplied = true;
                 break;
             }
@@ -9521,6 +9836,7 @@ TLT.addService("message", function (core) {
         config = configService.getServiceConfig("message") || {};
         privacy = config.privacy || [];
         privacyPatterns = config.privacyPatterns || [];
+        isShadowDomCacheEnabled = config.shadowDomCacheEnabled || false;
 
         // Fix idType to integers and setup regex targets (if any)
         for (i = 0, rulesLen = privacy.length; i < rulesLen; i += 1) {
@@ -9662,7 +9978,7 @@ TLT.addService("message", function (core) {
                 throw new TypeError("Invalid queueEvent given!");
             }
 
-            if (event.type === 12) {
+            if (event.type === 12 && isShadowDomCacheEnabled) {
                 optimizeDOMCaptureMessage(event.domCapture);
             }
 
@@ -9678,16 +9994,17 @@ TLT.addService("message", function (core) {
          */
         wrapMessages: function (messages) {
             var messagePackage = {
-                messageVersion: "10.0.0.0",
+                messageVersion: "11.0.0.0",
                 serialNumber: (count += 1),
                 sessions: [{
                     id: core.getPageId(),
+                    tabId: core.getTabId(),
                     startTime: sessionStart.getTime(),
                     timezoneOffset: sessionStart.getTimezoneOffset(),
                     messages: messages,
                     clientEnvironment: {
                         webEnvironment: {
-                            libVersion: "5.6.0.1875",
+                            libVersion: "5.7.0.1915",
                             domain: windowHostname,
                             page: windowHref,
                             referrer: document.referrer,
@@ -9718,7 +10035,7 @@ TLT.addService("message", function (core) {
 });
 
 /**
- * Copyright (c) 2019 Acoustic, L.P. All rights reserved.
+ * Copyright (c) 2020 Acoustic, L.P. All rights reserved.
  *
  * NOTICE: This file contains material that is confidential and proprietary to
  * Acoustic, L.P. and/or other developers. No license is granted under any intellectual or
@@ -9784,27 +10101,27 @@ TLT.addService("serializer", function (core) {
             }
         }
     }
-    function checkParserAndSerializer() {
-        var isParserAndSerializerInvalid;
+	function checkParserAndSerializer() {
+		var isParserAndSerializerInvalid;
         if (typeof serialize.json !== "function" || typeof parse.json !== "function") {
-            isParserAndSerializerInvalid = true;
+			isParserAndSerializerInvalid = true;
         } else {
-            if (typeof parse.json('{"foo": "bar"}') === "undefined") {
-                isParserAndSerializerInvalid = true;
-            } else {
-                isParserAndSerializerInvalid = parse.json('{"foo": "bar"}').foo !== "bar";
-            }
-            if (typeof parse.json("[1, 2]") === "undefined") {
-                isParserAndSerializerInvalid = true;
-            } else {
-                isParserAndSerializerInvalid = isParserAndSerializerInvalid || parse.json("[1, 2]")[0] !== 1;
-                isParserAndSerializerInvalid = isParserAndSerializerInvalid || parse.json("[1,2]")[1] !== 2;
-            }
-            isParserAndSerializerInvalid = isParserAndSerializerInvalid || serialize.json({"foo": "bar"}) !== '{"foo":"bar"}';
-            isParserAndSerializerInvalid = isParserAndSerializerInvalid || serialize.json([1, 2]) !== "[1,2]";
-        }
-        return isParserAndSerializerInvalid;
-    }
+			if (typeof parse.json('{"foo": "bar"}') === "undefined") {
+				isParserAndSerializerInvalid = true;
+			} else {
+				isParserAndSerializerInvalid = parse.json('{"foo": "bar"}').foo !== "bar";
+			}
+			if (typeof parse.json("[1, 2]") === "undefined") {
+				isParserAndSerializerInvalid = true;
+			} else {
+				isParserAndSerializerInvalid = isParserAndSerializerInvalid || parse.json("[1, 2]")[0] !== 1;
+				isParserAndSerializerInvalid = isParserAndSerializerInvalid || parse.json("[1,2]")[1] !== 2;
+			}
+			isParserAndSerializerInvalid = isParserAndSerializerInvalid || serialize.json({"foo": "bar"}) !== '{"foo":"bar"}';
+			isParserAndSerializerInvalid = isParserAndSerializerInvalid || serialize.json([1, 2]) !== "[1,2]";
+		}
+		return isParserAndSerializerInvalid;
+	}
 
     function initSerializerService(config) {
         var format;
@@ -9822,9 +10139,9 @@ TLT.addService("serializer", function (core) {
         if (typeof serialize.json !== "function" || typeof parse.json !== "function") {
             core.fail("JSON parser and/or serializer not provided in the UIC config. Can't continue.");
         }
-        if (checkParserAndSerializer()) {
-            core.fail("JSON stringification and parsing are not working as expected");
-        }
+		if (checkParserAndSerializer()) {
+			core.fail("JSON stringification and parsing are not working as expected");
+		}
 
         if (configService) {
             configService.subscribe("configupdated", updateConfig);
@@ -9899,7 +10216,7 @@ TLT.addService("serializer", function (core) {
 
 });
 /**
- * Copyright (c) 2019 Acoustic, L.P. All rights reserved.
+ * Copyright (c) 2020 Acoustic, L.P. All rights reserved.
  *
  * NOTICE: This file contains material that is confidential and proprietary to
  * Acoustic, L.P. and/or other developers. No license is granted under any intellectual or
@@ -9921,6 +10238,8 @@ TLT.addModule("TLCookie", function (context) {
 
     var moduleConfig = {},
         sessionIDStorageTTL = 0,
+        sessionIDUsesCookie = true,
+        sessionIDUsesStorage = false,
         wcxCookieName = "WCXSID",
         tltCookieName = "TLTSID",
         visitorCookieName = "CoreID6",
@@ -10043,9 +10362,10 @@ TLT.addModule("TLCookie", function (context) {
      * @param {object} config The module configuration.
      */
     function processConfig(config) {
-        var reqHeaders = [],
-            sessionIDUsesCookie = utils.getValue(config, "sessionIDUsesCookie", true),
-            sessionIDUsesStorage = utils.getValue(config, "sessionIDUsesStorage", false);
+        var reqHeaders = [];
+
+        sessionIDUsesCookie = utils.getValue(config, "sessionIDUsesCookie", true);
+        sessionIDUsesStorage = utils.getValue(config, "sessionIDUsesStorage", false);
 
         // Check if the tlAppKey is specified
         if (config.tlAppKey) {
@@ -10089,7 +10409,12 @@ TLT.addModule("TLCookie", function (context) {
         // Hence, check localStorage for session id before checking cookie.
         if (sessionIDUsesStorage) {
             sessionIDStorageTTL = utils.getValue(config, "sessionIDStorageTTL", 600000);
-            tltCookieValue = getSIDFromStorage(tltCookieName);
+            // localStorage may not be available.
+            try {
+                tltCookieValue = getSIDFromStorage(tltCookieName);
+            } catch (e) {
+                sessionIDUsesStorage = false;
+            }
         }
         if (!tltCookieValue && sessionIDUsesCookie) {
             tltCookieValue = utils.getCookieValue(tltCookieName);
@@ -10101,7 +10426,12 @@ TLT.addModule("TLCookie", function (context) {
                 tltCookieValue = wcxCookieValue;
             } else {
                 if (sessionIDUsesStorage) {
-                    tltCookieValue = setSIDInStorage(tltCookieName);
+                    // localStorage may not be available.
+                    try {
+                        tltCookieValue = setSIDInStorage(tltCookieName);
+                    } catch (e2) {
+                        sessionIDUsesStorage = false;
+                    }
                 }
                 if (!tltCookieValue && sessionIDUsesCookie) {
                     // Create the TLTSID session cookie
@@ -10235,7 +10565,7 @@ TLT.addModule("TLCookie", function (context) {
         },
 
         destroy: function () {
-            if (moduleConfig.sessionIDUsesStorage) {
+            if (sessionIDUsesStorage) {
                 // Reset the expiry of the storage session id
                 setSIDInStorage(tltCookieName, tltCookieValue);
             }
@@ -10256,8 +10586,9 @@ TLT.addModule("TLCookie", function (context) {
     };
 
 });
+
 /**
- * Copyright (c) 2019 Acoustic, L.P. All rights reserved.
+ * Copyright (c) 2020 Acoustic, L.P. All rights reserved.
  *
  * NOTICE: This file contains material that is confidential and proprietary to
  * Acoustic, L.P. and/or other developers. No license is granted under any intellectual or
@@ -10931,7 +11262,7 @@ if (TLT && typeof TLT.addModule === "function") {
 }
 
 /**
- * Copyright (c) 2019 Acoustic, L.P. All rights reserved.
+ * Copyright (c) 2020 Acoustic, L.P. All rights reserved.
  *
  * NOTICE: This file contains material that is confidential and proprietary to
  * Acoustic, L.P. and/or other developers. No license is granted under any intellectual or
@@ -10963,9 +11294,22 @@ if (TLT && typeof TLT.addModule === "function") {
                 unloadReceived: false,
                 perfEventSent: false
             },
+            perfTimerId = null,
             calculatedRenderTime = 0,
             config,
-            utils = context.utils;
+            utils = context.utils,
+            performanceObserver,
+            performanceAlert = [],
+            performanceAlertCfg,
+            performanceAlertDefaultOptions = {
+                enabled: false,
+                threshold: 2000,
+                // use resourceTypes to specify type of resource to monitor
+                // by default, sdk monitors all resources, e.g. "script", "link", "img", "xmlhttprequest", "iframe" ...
+                resourceTypes: [],
+                // use blacklist to skip monitoring of certain resources by matching the resource name
+                blacklist: []
+            };
 
 
         /**
@@ -11153,7 +11497,96 @@ if (TLT && typeof TLT.addModule === "function") {
 
             // Invoke the context API to post this event
             context.post(queueEvent);
+            // Set the state
             moduleState.perfEventSent = true;
+            // Clear the timer interval
+            if (perfTimerId) {
+                clearInterval(perfTimerId);
+                perfTimerId = null;
+            }
+        }
+
+        /**
+         * Record performance data of resources which takes longer than threshold time length
+         * @private
+         * @function
+         * @name performance-processPerformanceEntries
+         * @name {Array} entries Performance entries
+         */
+        function processPerformanceEntries(entries) {
+            var i, j,
+                entry,
+                name,
+                type,
+                blacklist = performanceAlertCfg.blacklist,
+                blacklistItem,
+                isBlacklisted;
+
+            for (i = 0; i < entries.length; i += 1) {
+                entry = entries[i];
+                name = entry.name;
+                type = entry.initiatorType;
+
+                isBlacklisted = false;
+
+                if (performanceAlertCfg.resourceTypes.length > 0 && performanceAlertCfg.resourceTypes.indexOf(type) === -1) {
+                    continue;
+                }
+
+                for (j = 0; j < blacklist.length; j += 1) {
+                    blacklistItem = blacklist[j];
+                    switch (typeof blacklistItem) {
+                    case "object":
+                        if (!blacklistItem.cRegex) {
+                            blacklistItem.cRegex = new RegExp(blacklistItem.regex, blacklistItem.flags);
+                        }
+                        blacklistItem.cRegex.lastIndex = 0;
+                        if (blacklistItem.cRegex.test(name)) {
+                            isBlacklisted = true;
+                        }
+                        break;
+                    case "string":
+                        if (name.indexOf(blacklistItem) !== -1) {
+                            isBlacklisted = true;
+                        }
+                        break;
+                    default:
+                        break;
+                    }
+                }
+
+                if (!isBlacklisted && entry.duration > performanceAlertCfg.threshold) {
+                    performanceAlert.push({
+                        resourceType: type,
+                        name:  name,
+                        duration: entry.duration,
+                        transferSize: entry.transferSize
+                    });
+                }
+            }
+        }
+
+        /**
+         * Starts monitoring performance of requested resources
+         * @private
+         * @function
+         * @name performance-startPerformanceObserver
+         */
+        function startPerformanceObserver() {
+            var oldEntries;
+
+            if (!performanceAlertCfg.enabled || (typeof window.PerformanceObserver !== "function")) {
+                return;
+            }
+
+            performanceObserver = new window.PerformanceObserver(function (list, obs) {
+                processPerformanceEntries(list.getEntries());
+            });
+
+            oldEntries = window.performance.getEntriesByType("resource");
+            processPerformanceEntries(oldEntries);
+
+            performanceObserver.observe({entryTypes: ["resource"]});
         }
 
         // Module interface.
@@ -11168,6 +11601,7 @@ if (TLT && typeof TLT.addModule === "function") {
              */
             init: function () {
                 config = context.getConfig();
+                performanceAlertCfg = utils.mixin({}, performanceAlertDefaultOptions, config.performanceAlert);
             },
 
             /**
@@ -11175,6 +11609,23 @@ if (TLT && typeof TLT.addModule === "function") {
              */
             destroy: function () {
                 config = null;
+
+                if (perfTimerId) {
+                    clearInterval(perfTimerId);
+                    perfTimerId = null;
+                }
+
+                if (performanceAlert.length > 0) {
+                    context.post({
+                        type: 17,
+                        performanceAlert: performanceAlert
+                    });
+                }
+                performanceAlert = [];
+
+                if (performanceObserver) {
+                    performanceObserver.disconnect();
+                }
             },
 
             /**
@@ -11191,11 +11642,16 @@ if (TLT && typeof TLT.addModule === "function") {
                 case "load":
                     moduleState.loadReceived = true;
                     processLoadEvent(event);
-                    setTimeout(function () {
-                        if (context.isInitialized()) {
-                            postPerformanceEvent(window);
-                        }
-                    }, utils.getValue(config, "delay", 2000));
+                    // Post the type 7 performance message if not already sent
+                    if (!moduleState.perfEventSent && !perfTimerId) {
+                        perfTimerId = setInterval(function () {
+                            if (context.isInitialized()) {
+                                postPerformanceEvent(window);
+                            }
+                        }, utils.getValue(config, "delay", 2000));
+                    }
+
+                    startPerformanceObserver();
                     break;
                 case "screenview_load":
                     if (!moduleState.perfEventSent) {
@@ -11229,7 +11685,7 @@ if (TLT && typeof TLT.addModule === "function") {
 }
 
 /**
- * Copyright (c) 2019 Acoustic, L.P. All rights reserved.
+ * Copyright (c) 2020 Acoustic, L.P. All rights reserved.
  *
  * NOTICE: This file contains material that is confidential and proprietary to
  * Acoustic, L.P. and/or other developers. No license is granted under any intellectual or
@@ -11267,9 +11723,12 @@ TLT.addModule("replay", function (context) {
         errorCount = 0,
         visitOrder = "",
         lastVisit = "",
+        lastPointerDownTarget = null,
         pageLoadTime = (new Date()).getTime(),
         pageDwellTime = 0,
         prevWebEvent = null,
+        defaultRootScreenName = "root",
+        rootScreenviewName,
         viewEventStart = null,
         viewTimeStart = null,
         scrollViewStart = null,
@@ -11295,7 +11754,9 @@ TLT.addModule("replay", function (context) {
         elMap = {},
         mousemoveCount = 0,
         mousemoveLimit = 1000,
-        maxInactivity = 0;
+        maxInactivity = 0,
+        lazyloadingEl = [],
+        pendingQueue = [];
 
     /**
      * Resets the visitedCount of all controls recorded in pastEvents.
@@ -11416,6 +11877,88 @@ TLT.addModule("replay", function (context) {
     }
 
     /**
+     * Search for css selector.
+     * @private
+     * @function
+     * @param {String} selector The selector to search for.
+     * @param {Array} documents List of mutated document objects.
+     * @param {Array} nodes List of mutated document fragment nodes.
+     * @returns {boolean} true if found, otherwise false.
+     */
+    function findSelector(selector, documents, nodes) {
+        var i,
+            el,
+            doc;
+
+        if (document.querySelector(selector)) {
+            return true;
+        }
+        for (i = 0; i < documents.length; i++) {
+            doc = documents[i];
+            if (doc.querySelector(selector)) {
+                return true;
+            }
+        }
+        for (i = 0; i < nodes.length; i++) {
+            el = nodes[i];
+            if (el.querySelector(selector)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Checks pending queue to see if dom capture should be triggered for this mutation.
+     * @private
+     * @function
+     * @param {Array} records List of mutation record objects.
+     * @param {Array} documents List of documents.
+     * @param {Array} nodes List of mutated document fragment nodes.
+     * @returns {}
+     */
+    function mutationDomCapture(records, documents, nodes) {
+        var i,
+            selector,
+            exists,
+            dualSnapshot,
+            queryStatus,
+            lastStatus,
+            pendingEvent;
+
+        for (i = 0; i < pendingQueue.length; i++) {
+            pendingEvent = pendingQueue[i];
+
+            selector = pendingEvent.delayUntil.selector;
+            exists = utils.getValue(pendingEvent.delayUntil, "exists", true);
+            dualSnapshot = pendingEvent.delayUntil.dualSnapshot || false;
+            queryStatus = findSelector(selector, documents, nodes);
+            lastStatus = pendingEvent.lastStatus || false;
+
+            // If exists is true, capture dom only when selector appears.  If false, capture only when it disappears.
+            // If dualSnapshot is true, capture dom when selector both appears and disappears.
+            if ((exists === true && queryStatus === true && lastStatus === false) ||
+                    (exists === false && queryStatus === false && lastStatus === true) ||
+                    (dualSnapshot === true && queryStatus === true && lastStatus === false) ||
+                    (dualSnapshot === true && queryStatus === false && lastStatus === true)) {
+
+                context.performDOMCapture(document, { eventOn: true, dcid: pendingEvent.dcid });
+
+                if (!dualSnapshot || queryStatus === false) {
+                    pendingQueue.splice(i--, 1);
+
+                    if (pendingQueue.length === 0) {
+                        TLT.registerMutationCallback(mutationDomCapture, false);
+                    }
+                }
+                pendingEvent.lastStatus = queryStatus;
+                break;
+            }
+            pendingEvent.lastStatus = queryStatus;
+        }
+    }
+
+    /**
      * Invoke the core API to take the DOM capture. If a delay is specified, then
      * schedule a DOM capture.
      * @private
@@ -11438,10 +11981,17 @@ TLT.addModule("replay", function (context) {
 
         if (delay) {
             dcid = "dcid-" + utils.getSerialNumber() + "." + (new Date()).getTime() + "s";
-            window.setTimeout(function () {
-                config.dcid = dcid;
-                context.performDOMCapture(root, config);
-            }, delay);
+            if (typeof delay === "object") {
+                // Queue event until css selector occurs before capturing dom.
+                pendingQueue.push({dcid: dcid, delayUntil: delay, lastStatus: false});
+
+                TLT.registerMutationCallback(mutationDomCapture, true);
+            } else {
+                window.setTimeout(function () {
+                    config.dcid = dcid;
+                    context.performDOMCapture(root, config);
+                }, delay);
+            }
         } else {
             delete config.dcid;
             dcid = context.performDOMCapture(root, config);
@@ -11466,7 +12016,7 @@ TLT.addModule("replay", function (context) {
             if (screenviewName && screenviewName.indexOf("#") === 0) {
                 //in case of hash change
                 targetScreenview = location.pathname + screenviewName;
-            } else if (typeof screenviewName === "undefined" || screenviewName === "root") {
+            } else if (typeof screenviewName === "undefined" || screenviewName === defaultRootScreenName) {
                 //in case of no screenview name
                 targetScreenview = location.pathname + location.hash;
             } else {
@@ -11506,7 +12056,8 @@ TLT.addModule("replay", function (context) {
         var limitReached = false,
             msg;
 
-        if (!mousemoveConfig.enabled) {
+        // If mousemove is not enabled, or if this is a touch device, do not log.
+        if (!mousemoveConfig.enabled || window.hasOwnProperty("ontouchstart")) {
             return;
         }
         if (mousemoveQueue.length === 0) {
@@ -11624,11 +12175,14 @@ TLT.addModule("replay", function (context) {
                     }
                 }
             }
+            if (dcTrigger.event === "change" && dcTrigger.delayUntil) {
+                lazyloadingEl = lazyloadingEl.concat(dcTrigger.targets);
+            }
         }
 
         if (capture) {
             // Immediate or delayed?
-            delay = dcTrigger.delay || (dcTrigger.event === "load" ? 7 : 0);
+            delay = dcTrigger.delay || dcTrigger.delayUntil || (dcTrigger.event === "load" ? 7 : 0);
             // Force full DOM snapshot?
             captureConfig.forceFullDOM = !!dcTrigger.fullDOMCapture;
 
@@ -11902,11 +12456,16 @@ TLT.addModule("replay", function (context) {
 
         webEvent = webEvent || (pastEvents[id] ? pastEvents[id].webEvent : {});
         if (webEvent.type === "blur" || webEvent.type === "change") {
-            targetState = utils.getValue(webEvent, "target.state", null);
+            targetState = utils.getValue(webEvent, "target.state", {});
         } else if (webEvent.target) {
             targetState = utils.getTargetState(webEvent.target.element) || {};
         } else {
             targetState = {};
+        }
+
+        // Do not convert event to change/blur on a disabled element
+        if (targetState && targetState.disabled) {
+            doNotConvert = true;
         }
 
         lastQueueEvent = tmpQueue[tmpQueue.length - 1];
@@ -11966,7 +12525,7 @@ TLT.addModule("replay", function (context) {
         }
 
         // Save current target state as future prevState
-        pastEvents[id].prevState = targetState;
+        pastEvents[id].prevState = targetState ? utils.mixin({}, targetState) : targetState;
 
         postEventQueue(tmpQueue);
     }
@@ -12056,7 +12615,8 @@ TLT.addModule("replay", function (context) {
         // Check if there is a repeating click/change on the same input element.
         if (prevID === id &&
                 ((webEvent.type === "click" && pastEvents[id].processedClick) ||
-                (webEvent.type === "change" && pastEvents[id].processedChange))) {
+                (webEvent.type === "change" && pastEvents[id].processedChange) ||
+                (webEvent.type === "pointerup" && pastEvents[id].processedClick && utils.getValue(webEvent.target, "state.disabled", false)))) {
             // Post the prior click or change
             handleBlur(prevID, null, true);
             pendingInteractionPosted = true;
@@ -12088,6 +12648,11 @@ TLT.addModule("replay", function (context) {
 
         pastEvents[id].webEvent = webEvent;
         pastEvents[id].processedChange = true;
+
+        // If this is a lazyloading element, do snapshot before or after css selector.
+        if (utils.matchTarget(lazyloadingEl, webEvent.target) !== -1) {
+            handleBlur(id, webEvent);
+        }
     }
 
 
@@ -12110,7 +12675,6 @@ TLT.addModule("replay", function (context) {
 
         // Ensure focus is registered for the element being clicked
         handleFocus(id, webEvent);
-
 
         // Update the existing queue entry with relXY info. from the click event
         tmpQueueEvent = tmpQueue[tmpQueue.length - 1];
@@ -12141,6 +12705,39 @@ TLT.addModule("replay", function (context) {
     }
 
     /**
+     * Handles pointerdown and pointerup events. Interprets a pointerdown
+     * followed by a pointerup on a disabled element as a "click"
+     * @private
+     * @param {string} id ID of an elment
+     * @param {WebEvent} webEvent Normalized browser event
+     * @return void
+     */
+    function handlePointerClick(id, webEvent) {
+        var currPointerTarget = id;
+
+        if (!utils.getValue(webEvent, "target.element.disabled", false)) {
+            // Only infer clicks on disabled elements.
+            return;
+        }
+
+        switch (webEvent.type) {
+        case "pointerdown":
+            // Save the current target
+            lastPointerDownTarget = currPointerTarget;
+            break;
+        case "pointerup":
+            // Is the current pointerup target same as the previous pointerdown target?
+            if (currPointerTarget === lastPointerDownTarget) {
+                // Convert to click
+                webEvent.type = "click";
+                handleClick(id, webEvent);
+            }
+            lastPointerDownTarget = null;
+            break;
+        }
+    }
+
+    /**
      * Handles the mousemove event and posts the appropriate message to the
      * replay module's queue
      * @private
@@ -12159,7 +12756,8 @@ TLT.addModule("replay", function (context) {
             x,
             y;
 
-        if (!mousemoveConfig.enabled) {
+        // If mousemove is not enabled, or if this is a touch device, do not record event.
+        if (!mousemoveConfig.enabled || window.hasOwnProperty("ontouchstart")) {
             return;
         }
 
@@ -12661,6 +13259,12 @@ TLT.addModule("replay", function (context) {
             case "blur":
                 returnObj = handleBlur(id, webEvent);
                 break;
+            case "pointerdown":
+                handlePointerClick(id, webEvent);
+                break;
+            case "pointerup":
+                handlePointerClick(id, webEvent);
+                break;
             case "click":
                 // Normal click processing
                 returnObj = handleClick(id, webEvent);
@@ -12713,8 +13317,13 @@ TLT.addModule("replay", function (context) {
                     }
                 }, 100);
 
-                // XXX - Use the context instead?
-                TLT.logScreenviewLoad("root");
+                // Use "root" or location.hash depending on configuration. Default is to use location.hash if it exists.
+                if (utils.getValue(replayConfig, "forceRootScreenview", false)) {
+                    rootScreenviewName = defaultRootScreenName;
+                } else {
+                    rootScreenviewName = TLT.normalizeUrl(location.hash) || defaultRootScreenName;
+                }
+                TLT.logScreenviewLoad(rootScreenviewName);
 
                 break;
             case "screenview_load":
@@ -12768,9 +13377,19 @@ TLT.addModule("replay", function (context) {
                 // send final clientstate
                 handleClientState(webEvent);
 
-                // XXX - Use the context instead?
-                TLT.logScreenviewUnload("root");
+                // If the root screenview was the default or the current location.hash is
+                // the same as during page load then log the page level screenview unload.
+                if (rootScreenviewName === defaultRootScreenName ||
+                        TLT.normalizeUrl(location.hash) === rootScreenviewName) {
+                    TLT.logScreenviewUnload(rootScreenviewName);
+                }
 
+                try {
+                    if (sessionStorage) {
+                        sessionStorage.setItem("tltUnload", 1);
+                    }
+                } catch (e) {
+                }
                 break;
             case "mousemove":
                 handleMousemove(webEvent);
@@ -12791,13 +13410,3 @@ TLT.addModule("replay", function (context) {
         }
     };
 });
-
-
-
-
-
-
-
-
-
-
