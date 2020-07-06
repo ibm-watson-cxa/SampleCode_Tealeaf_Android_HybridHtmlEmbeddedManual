@@ -1,5 +1,5 @@
 {
-  "LibraryVersion": "10.3.63",
+  "LibraryVersion": "10.3.64",
   "FilterMessageTypes": false,
   "MessageTypes": "4,5",
   "AddMessageTypeHeader": false,
@@ -26,5 +26,7 @@
   "RemoveAllCookies": false,
   "ColorPrimary": "#3F51B5",
   "ColorPrimaryDark": "#303F9F",
-  "ColorAccent": "#FF4081"
+  "ColorAccent": "#FF4081",
+  "EnableGestureSwipeLogScreen": true,
+  "EnableScreenshotCache": false
 }
