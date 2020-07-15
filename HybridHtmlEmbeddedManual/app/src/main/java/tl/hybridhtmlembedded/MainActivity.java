@@ -9,7 +9,6 @@ package tl.hybridhtmlembedded;
 import android.annotation.SuppressLint;
 import android.app.ActionBar;
 import android.app.Activity;
-import android.content.Intent;
 import android.os.Build.VERSION;
 import android.os.Build.VERSION_CODES;
 import android.os.Bundle;
@@ -18,7 +17,6 @@ import android.view.View;
 import android.view.View.OnClickListener;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
-import android.widget.Button;
 import android.widget.ZoomButtonsController;
 
 import com.ibm.eo.util.LogInternal;
@@ -46,16 +44,7 @@ public class MainActivity extends Activity {
 //        button.setOnClickListener(getOnClickListener());
 //        CheckBox checkBox = (CheckBox) findViewById(R.id.checkBox1);
 //        checkBox.setOnClickListener(getOnClickListener());
-
-        Button button = findViewById(R.id.button);
-        button.setOnClickListener( new OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                Intent intent = new Intent(getApplicationContext(), SettingsActivity.class);
-                startActivity(intent);
-            }
-        });
-
+        
         if (VERSION.SDK_INT >= VERSION_CODES.HONEYCOMB) {
             ActionBar actionBar = getActionBar();
             if (actionBar != null) {
