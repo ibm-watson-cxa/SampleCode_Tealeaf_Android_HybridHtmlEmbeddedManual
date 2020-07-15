@@ -11,7 +11,7 @@
 
 /**
  * @fileOverview The Gesture module implements the logic for capturing Hammer.js gesture events.
- * @version 5.7.0.1914
+ * @version 5.7.0.1915
  * @exports gesture
  */
 
