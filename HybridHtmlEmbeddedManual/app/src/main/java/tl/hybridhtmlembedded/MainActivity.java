@@ -9,6 +9,7 @@ package tl.hybridhtmlembedded;
 import android.annotation.SuppressLint;
 import android.app.ActionBar;
 import android.app.Activity;
+import android.content.Intent;
 import android.os.Build.VERSION;
 import android.os.Build.VERSION_CODES;
 import android.os.Bundle;
@@ -39,12 +40,22 @@ public class MainActivity extends Activity {
         setContentView(R.layout.main);
         createWebView(R.id.myWebView1, "file:///android_asset/mobile_domcap/embeddedGesturesMenu.html");
         createWebView(R.id.myWebView2, "file:///android_asset/mobile_domcap/embeddedGesturesMenu.html");
-        
+
         Button button = (Button) findViewById(R.id.button1);
         button.setOnClickListener(getOnClickListener());
         CheckBox checkBox = (CheckBox) findViewById(R.id.checkBox1);
         checkBox.setOnClickListener(getOnClickListener());
-        
+
+        Button button2 = findViewById(R.id.button2);
+        button2.setOnClickListener( new OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                Intent intent = new Intent(getApplicationContext(), SettingsActivity.class);
+                startActivity(intent);
+            }
+        });
+
+
         if (VERSION.SDK_INT >= VERSION_CODES.HONEYCOMB) {
             ActionBar actionBar = getActionBar();
             if (actionBar != null) {
