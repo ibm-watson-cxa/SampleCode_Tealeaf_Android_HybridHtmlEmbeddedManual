@@ -1,5 +1,5 @@
 {
-  "LibraryVersion": "10.3.80",
+  "LibraryVersion": "10.3.81",
   "FilterMessageTypes": false,
   "MessageTypes": "4,5",
   "AddMessageTypeHeader": false,
