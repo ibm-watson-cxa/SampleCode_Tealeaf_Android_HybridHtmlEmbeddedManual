@@ -1,5 +1,5 @@
 {
-  "LibraryVersion": "10.3.84",
+  "LibraryVersion": "10.3.85",
   "FilterMessageTypes": false,
   "MessageTypes": "4,5",
   "AddMessageTypeHeader": false,
@@ -28,5 +28,6 @@
   "ColorPrimaryDark": "#303F9F",
   "ColorAccent": "#FF4081",
   "EnableGestureSwipeLogScreen": true,
-  "EnableScreenshotCache": false
+  "EnableScreenshotCache": false,
+  "FlushUpdatedPlaceHolders": false
 }
