@@ -94,7 +94,7 @@ public class MyWebView extends WebView {
     	this.setWebChromeClient(new MyWebChromeClient());
     	this.setWebViewId(Tealeaf.getPropertyName(this));
     	// This is used to setup javascript bridge to communicate from web to native to collect data
-        this.addJavascriptInterface(new JavaScriptInterface(this.getContext(), getWebViewId().getId()), "tlBridge");
+        this.addJavascriptInterface(new JavaScriptInterface(this.getContext(), this, getWebViewId().getId()), "tlBridge");
     }
 
 }

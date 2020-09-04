@@ -4,32 +4,51 @@
     android:layout_height="fill_parent"
     android:orientation="vertical" >
 
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/label1"/>
+
     <tl.hybridhtmlembedded.MyWebView
         android:id="@+id/myWebView1"
         android:layout_width="match_parent"
         android:layout_height="0dip"
         android:layout_weight="0.86" />
-    
-    <View 
+
+    <TextView
         android:layout_width="wrap_content"
-        android:layout_height="5dip" />
-    <!---->
-    <!--<tl.hybridhtmlembedded.MyWebView-->
-        <!--android:id="@+id/myWebView2"-->
-        <!--android:layout_width="match_parent"-->
-        <!--android:layout_height="0dip"-->
-        <!--android:layout_weight="0.86" />-->
+        android:layout_height="wrap_content"
+        android:text="@string/label2" />
 
-    <!--<Button-->
-        <!--android:id="@+id/button1"-->
-        <!--android:layout_width="wrap_content"-->
-        <!--android:layout_height="wrap_content"-->
-        <!--android:text="@string/return_menu" />-->
+    <tl.hybridhtmlembedded.MyWebView
+        android:id="@+id/myWebView2"
+        android:layout_width="match_parent"
+        android:layout_height="0dip"
+        android:layout_weight="0.86" />
 
-    <!--<CheckBox-->
-        <!--android:id="@+id/checkBox1"-->
-        <!--android:layout_width="wrap_content"-->
-        <!--android:layout_height="wrap_content"-->
-        <!--android:text="@string/test" />-->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/button1"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/return_menu" />
+
+        <Button
+            android:id="@+id/button2"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/cxa_setting" />
+
+    </LinearLayout>
+
+    <CheckBox
+        android:id="@+id/checkBox1"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/test" />
 
 </LinearLayout>

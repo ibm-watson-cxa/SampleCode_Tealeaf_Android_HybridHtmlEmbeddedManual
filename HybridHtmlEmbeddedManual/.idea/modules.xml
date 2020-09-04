@@ -2,8 +2,10 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/HybridHtmlEmbeddedManual.iml" filepath="$PROJECT_DIR$/HybridHtmlEmbeddedManual.iml" />
-      <module fileurl="file://$PROJECT_DIR$/app/app.iml" filepath="$PROJECT_DIR$/app/app.iml" />
+      <module fileurl="file://$PROJECT_DIR$/HybridHtmlEmbeddedManual.iml" filepath="$PROJECT_DIR$/HybridHtmlEmbeddedManual.iml" group="HybridHtmlEmbeddedManual" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/app/HybridHtmlEmbeddedManual-app.iml" filepath="$PROJECT_DIR$/.idea/modules/app/HybridHtmlEmbeddedManual-app.iml" group="HybridHtmlEmbeddedManual/app" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/SampleCode_Tealeaf_Android_HybridHtmlEmbeddedManual-HybridHtmlEmbeddedManual.iml" filepath="$PROJECT_DIR$/.idea/modules/SampleCode_Tealeaf_Android_HybridHtmlEmbeddedManual-HybridHtmlEmbeddedManual.iml" group="HybridHtmlEmbeddedManual" />
+      <module fileurl="file://$PROJECT_DIR$/app/app.iml" filepath="$PROJECT_DIR$/app/app.iml" group="HybridHtmlEmbeddedManual/app" />
     </modules>
   </component>
 </project>
