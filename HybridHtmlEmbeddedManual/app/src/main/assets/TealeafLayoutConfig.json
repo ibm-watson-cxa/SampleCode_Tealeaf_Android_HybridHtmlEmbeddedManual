@@ -9,31 +9,13 @@
     "IBMGlobalScreenSettings":{
       "ScreenChange": true,
       "DisplayName": "",
-      "CaptureLayoutDelay": 500,
+      "CaptureLayoutDelay": 2000,
       "ScreenShot": false,
-      "NumberOfWebViews": 0,
+      "NumberOfWebViews": 3,
       "CaptureUserEvents": true,
       "CaptureScreenVisits": true,
       "CaptureLayoutOn": 2,
-      "CaptureScreenshotOn": 0,
-      "Masking": {
-        "HasMasking": true,
-        "HasCustomMask": true,
-        "Sensitive": {
-          "capitalCaseAlphabet": "X",
-          "number": "9",
-          "smallCaseAlphabet": "x",
-          "symbol": "#"
-        },
-        "MaskIdList": [
-          "textView1,login.password,editText*"
-        ],
-        "MaskValueList": [
-          "test sensitive*",
-          "^3[47][0-9]{13}$",
-          "^4[0-9]{12}(?:[0-9]{3})?$"
-        ]
-      }
+      "CaptureScreenshotOn": 0
     },
     "MainActivity": {
       "ScreenChange": true,
