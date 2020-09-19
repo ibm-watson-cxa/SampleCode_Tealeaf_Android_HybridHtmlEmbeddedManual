@@ -24,6 +24,7 @@ import android.widget.ZoomButtonsController;
 
 import com.ibm.eo.util.LogInternal;
 import com.tl.uic.Tealeaf;
+import com.tl.uic.javascript.JavaScriptInterface;
 
 import java.lang.reflect.Method;
 
@@ -45,6 +46,15 @@ public class MainActivity extends Activity {
         button.setOnClickListener(getOnClickListener());
         CheckBox checkBox = (CheckBox) findViewById(R.id.checkBox1);
         checkBox.setOnClickListener(getOnClickListener());
+
+        Button button1 = findViewById(R.id.button1);
+        button1.setOnClickListener( new OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                Intent intent = new Intent(getApplicationContext(), MainActivity.class);
+                startActivity(intent);
+            }
+        });
 
         Button button2 = findViewById(R.id.button2);
         button2.setOnClickListener( new OnClickListener() {
@@ -106,11 +116,10 @@ public class MainActivity extends Activity {
                 LogInternal.logException("HybridHTMLEmbedded", e);
             }
         }
-        
+
+        // LoadUrl needs to be called last
         myWebView.loadUrl(url);
-        WebSettings webSettings = myWebView.getSettings();
-        webSettings.setJavaScriptEnabled(true);
-	}
+    }
 	
 	public static OnClickListener getOnClickListener() {
 		OnClickListener onClickListener = new OnClickListener() {

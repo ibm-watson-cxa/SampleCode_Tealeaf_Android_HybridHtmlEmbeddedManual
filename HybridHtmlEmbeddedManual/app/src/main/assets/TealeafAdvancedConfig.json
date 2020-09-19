@@ -22,7 +22,7 @@
   "GenerateImageHash": true,
   "SwitchWidth": 140,
   "EnableActivityLifeCycleListener": true,
-  "UseXpathId": false,
+  "UseXpathId": true,
   "RemoveAllCookies": false,
   "ColorPrimary": "#3F51B5",
   "ColorPrimaryDark": "#303F9F",

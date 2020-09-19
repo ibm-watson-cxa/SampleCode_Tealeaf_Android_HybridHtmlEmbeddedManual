@@ -6,8 +6,13 @@
  ******************************************************************************/
 package tl.hybridhtmlembedded;
 
+import android.app.Activity;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+
+import com.tl.uic.Tealeaf;
+import com.tl.uic.util.CustomAsyncTaskCompatUtil;
+import com.tl.uic.util.DialogLogScreenTask;
 
 
 public class MyWebViewClient extends WebViewClient {
@@ -32,5 +37,8 @@ public class MyWebViewClient extends WebViewClient {
         view.loadUrl("javascript:TLT.registerBridgeCallbacks([ "
             + "{enabled: true, cbType: 'screenCapture', cbFunction: function (){tlBridge.screenCapture();}},"
             + "{enabled: true, cbType: 'messageRedirect', cbFunction: function (data){tlBridge.addMessage(data);}}]);");
+
+//        Good place to log layout, only need to log screen once per Activity
+//        Tealeaf.logScreenLayout((Activity)view.getContext(), "Main", 1000);
     }
 }

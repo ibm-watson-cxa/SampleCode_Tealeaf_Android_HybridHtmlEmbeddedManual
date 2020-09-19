@@ -66,12 +66,13 @@ public class WebDialog extends Dialog {
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
 
-                DialogLogScreenTask dialogLogScreenTask = new DialogLogScreenTask((Activity) mContext, "WebNoticeDialog_onPageFinished_DialogLogScreenTask", WebDialog.this, Tealeaf.getCurrentSessionId());
-                CustomAsyncTaskCompatUtil.executeParallel(dialogLogScreenTask);
                 // Need to register callbacks for Native SDK to collect data from WebView
                 view.loadUrl("javascript:TLT.registerBridgeCallbacks([ "
                         + "{enabled: true, cbType: 'screenCapture', cbFunction: function (){tlBridge.screenCapture();}},"
                         + "{enabled: true, cbType: 'messageRedirect', cbFunction: function (data){tlBridge.addMessage(data);}}]);");
+
+                DialogLogScreenTask dialogLogScreenTask = new DialogLogScreenTask((Activity) mContext, "WebNoticeDialog_onPageFinished_DialogLogScreenTask", WebDialog.this, Tealeaf.getCurrentSessionId());
+                CustomAsyncTaskCompatUtil.executeParallel(dialogLogScreenTask);
             }
         });
         mWebnotiView.setWebChromeClient(new WebChromeClient());
