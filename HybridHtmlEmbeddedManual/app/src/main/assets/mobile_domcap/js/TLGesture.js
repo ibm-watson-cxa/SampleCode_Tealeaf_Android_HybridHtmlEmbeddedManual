@@ -11,7 +11,7 @@
 
 /**
  * @fileOverview The Gesture module implements the logic for capturing Hammer.js gesture events.
- * @version 5.7.0.1915
+ * @version 6.0.0.1960
  * @exports gesture
  */
 
@@ -65,8 +65,7 @@ TLT.addModule("gestures", function (context) {
         elementArray = [],
         prevGestureQueueEvent,
         hammerVersion,
-        startEventTarget,
-        i;
+        startEventTarget;
 
     /**
      * Posts Gesture Event to Queue
@@ -214,19 +213,8 @@ Queue Event JSON Schema
             hammerTouchesLocation,
             saveFirstTouch,
             addFirstTouch,
-            screenWidth,
-            screenHeight,
             relPosInfo,
             i;
-
-        //Screen width and height are not updated in landscape mode for iOS devices.
-        if (utils.isiOS && utils.getOrientationMode(window.orientation) === "LANDSCAPE") {
-            screenWidth = screen.height;
-            screenHeight = screen.width;
-        } else {
-            screenWidth = screen.width;
-            screenHeight = screen.height;
-        }
 
         if (hammerVersion === "1") {
             hammerTouches = options.webEvent.gesture.touches;
@@ -550,7 +538,8 @@ Queue Event JSON Schema
     // will be invoked by the UIC core.
     return {
         init: function () {
-            var cssSelectors,
+            var i, j, k,
+                cssSelectors,
                 cssSelectorArray,
                 elements = [],
                 gestureEvents = TLT.getCoreConfig().modules.gestures.events,
@@ -558,9 +547,7 @@ Queue Event JSON Schema
                 eventsToEnable = "",
                 hammertime,
                 eventName,
-                counter = 0,
-                j,
-                k;
+                counter = 0;
 
             //Check hammer.js is available and check the version
             if (typeof Hammer === "function") {
@@ -674,6 +661,8 @@ Queue Event JSON Schema
             }
         },
         destroy: function () {
+            var i;
+
             //Turn off all the hammertimes
             if (hammertimeArray !== undefined && hammertimeArray !== null) {
                 for (i = 0; i < hammertimeArray.length; i += 1) {
@@ -686,15 +675,13 @@ Queue Event JSON Schema
             elementArray = [];
         },
         onevent: function (webEvent) {
-            var id = null,
-                position;
+            var id;
 
             // Sanity checks
             if (typeof webEvent !== "object" || !webEvent.type || (!webEvent.gesture && webEvent.type !== "unload") || !webEvent.target) {
                 return;
             }
-            //Find the position of the element in elementArray to find the corresponding gesture option object
-            position = utils.indexOf(elementArray, webEvent.target.element);
+
             if (webEvent.type !== "unload" && webEvent.gesture.pointerType === "mouse" && gestureOptions.preventMouse) {
                 return;
             }
@@ -731,3 +718,4 @@ Queue Event JSON Schema
     };
 
 });
+
