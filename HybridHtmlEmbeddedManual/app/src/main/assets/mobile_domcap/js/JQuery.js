@@ -7,7 +7,7 @@
  * Acoustic, L.P. Any unauthorized copying or distribution of content from this file is
  * prohibited.
  *
- * @version 5.7.0.1915
+ * @version 6.0.0.1960
  * @flags w3c,NDEBUG
  */
 
@@ -43,7 +43,25 @@ window.TLT = (function () {
         queueService,
         serializerService,
         coreConfig,
+        registeredPageshowListener,
         utils;
+
+    /**
+     * Event listener registered when library is destroyed to observe any
+     * subsequent pageshow event on a return to the persisted page.
+     * Invokes TLT.init to initialize the library in case of a subsequent
+     * return to the persisted page due to BACK/FORWARD navigation.
+     * @param {DOMEvent} event The "pageshow" DOM event.
+     * @returns {undefined}
+     */
+    function pageshowListener(event) {
+        if (window.TLT && event.persisted) {
+            // Reset the prior termination reason (if any)
+            TLT.terminationReason = "";
+            // Initialize using prior cached configuration.
+            TLT.init();
+        }
+    }
 
     /**
      * Create and add a screenview message to the default queue. Also
@@ -129,6 +147,8 @@ window.TLT = (function () {
 
         tltTabId,
 
+        tltSessionCookieInfo = {},
+
         /**
          * A collection of module information. The keys in this object are the
          * module names and the values are an object consisting of three pieces
@@ -181,18 +201,18 @@ window.TLT = (function () {
                 }
             }
 
-            function isFrameBlacklisted(iframe) {
+            function _isFrameBlacklisted(iframe) {
                 if (utils.indexOf(checkedFrames, iframe) < 0) {
                     prepareBlacklistedFrames(iframe.ownerDocument);
                 }
                 return utils.indexOf(blacklistedFrames, iframe) > -1;
             }
 
-            isFrameBlacklisted.clearCache = function () {
+            _isFrameBlacklisted.clearCache = function () {
                 blacklistedFrames = null;
             };
 
-            return isFrameBlacklisted;
+            return _isFrameBlacklisted;
         }()),
 
         /**
@@ -378,7 +398,6 @@ window.TLT = (function () {
                         unload = false;
 
                     localTop = localTop || core._getLocalTop();
-                    documentScope = documentScope || localTop.document;
 
                     if (modStatus) {
                         // Normalization has already occurred. This could be a call from rebind.
@@ -564,6 +583,49 @@ window.TLT = (function () {
         }()),
 
         /**
+         * Checks if the user-agent matches with any entry in the list of blocked user-agents.
+         * @param {Array} blockList The list of blocked user-agents. Can contain a regex pattern or a string.
+         * @param {String} ua The user agent string.
+         * @returns {String|null} Matched value or null if no match.
+         */
+        getBlockedUA = function (blockList, ua) {
+            var i,
+                len,
+                blockListItem,
+                regex,
+                matchResult,
+                matchValue = null;
+
+            // Sanity check
+            if (!blockList || !ua) {
+                return matchValue;
+            }
+
+            for (i = 0, len = blockList.length; i < len; i += 1) {
+                blockListItem = blockList[i];
+                switch (typeof blockListItem) {
+                case "object":
+                    // Regex
+                    regex = new RegExp(blockListItem.regex, blockListItem.flags);
+                    matchResult = regex.exec(ua);
+                    if (matchResult) {
+                        matchValue = matchResult[0];
+                    }
+                    break;
+                case "string":
+                    if (ua.indexOf(blockListItem) !== -1) {
+                        matchValue = blockListItem;
+                    }
+                    break;
+                default:
+                    break;
+                }
+            }
+
+            return matchValue;
+        },
+
+        /**
          * Checks if the element is on the list of blocked elements.
          * @param {DOMElement} element The element to be checked.
          * @param {DOMElement} [scope] Optional scope for evaluating the CSS selectors in the block list.
@@ -617,73 +679,22 @@ window.TLT = (function () {
 
         /**
          * Returns the tab id from session storage if it exists.
-         * If not, searches the local storage for the previous tab id of the tealeaf session.
+         * If not, creates a tab id and stores it in session storage.
+         * Returns null if session storage is not accessible.
          */
         getTabIndex = function () {
-            var tabId,
-                sessionId,
-                localTabId,
-                localSessionId,
-                sessionIdUsesStorage = utils.getValue(coreConfig, "sessionIDUsesStorage", false),
-                sessionIdUsesCookie = utils.getValue(coreConfig, "sessionIDUsesCookie", true),
-                tltCookieName = coreConfig.sessionizationCookieName || "TLTSID",
-                item,
-                sidKey = "tltTabSid",
-                tabIdKey = "tltTabId",
-                unloadKey = "tltUnload";
+            var tabId = null,
+                tabIdKey = "tltTabId";
 
-            // Catch exception if storage is disabled.
             try {
-                if (!sessionStorage || !localStorage) {
-                    return 0;
+                // Get the current tab id from session storage.
+                tabId = sessionStorage.getItem(tabIdKey);
+                if (!tabId) {
+                    // Create a new tab id since one doesn't already exist.
+                    tabId = utils.getRandomString(4);
+                    sessionStorage.setItem(tabIdKey, tabId);
                 }
             } catch (e) {
-                return 0;
-            }
-            // Get current session id.
-            if (sessionIdUsesStorage) {
-                item = localStorage.getItem(tltCookieName);
-                if (item) {
-                    sessionId = item.split("|")[1];
-                }
-            }
-            if (!sessionId && sessionIdUsesCookie) {
-                sessionId = utils.getCookieValue(tltCookieName);
-            }
-            // If tab is not reloading, clear storage tab id to prevent copying itself to a duplicate tab.
-            if (sessionStorage.getItem(unloadKey) === null) {
-                sessionStorage.removeItem(tabIdKey);
-            }
-            sessionStorage.removeItem(unloadKey);
-
-            // Get current tab id.
-            tabId = sessionStorage.getItem(tabIdKey);
-
-            // Get previous session id, tab id.
-            localSessionId = localStorage.getItem(sidKey);
-            localTabId = localStorage.getItem(tabIdKey);
-
-            if (tabId === null) {
-                if (localTabId === null) {
-                    tabId = 1;
-                } else {
-                    // If the current and previous session ids are the same, increment tab id counter. Otherwise reset to 1.
-                    if (sessionId === localSessionId) {
-                        tabId = parseInt(localTabId, 10) + 1;
-                    } else {
-                        tabId = 1;
-                    }
-                }
-                // Save the new tab id.
-                localStorage.setItem(tabIdKey, tabId);
-                sessionStorage.setItem(tabIdKey, tabId);
-
-                // Save the new session id.
-                if (sessionId) {
-                    localStorage.setItem(sidKey, sessionId);
-                }
-            } else {
-                tabId = parseInt(tabId, 10);
             }
             return tabId;
         },
@@ -691,6 +702,13 @@ window.TLT = (function () {
         // main interface for the core
         core = /**@lends TLT*/ {
 
+
+            /**
+             * @returns Returns tltSessionCookieInfo set by TLCookie module.
+             */
+            getTLTSessionCookieInfo: function () {
+                return tltSessionCookieInfo;
+            },
 
             /**
              * Load cached vars for unit tests.
@@ -729,10 +747,22 @@ window.TLT = (function () {
             },
 
             /**
+             * Determines tltSessionCookieInfo set by TLCookie module.
+             * @param {String} moduleName
+             * @param {String} cookieName
+             * @param {String} cookieValue
+             * @returns {void}
+             */
+            setSessionCookieInfo: function (moduleName, cookieName, cookieValue) {
+                tltSessionCookieInfo.tltCookieName = cookieName;
+                tltSessionCookieInfo.tltCookieValue = cookieValue;
+            },
+
+            /**
              * @returns {String} The library version string.
              */
             getLibraryVersion: function () {
-                return "5.7.0.1915";
+                return "6.0.0.1960";
             },
 
             /**
@@ -774,10 +804,11 @@ window.TLT = (function () {
 
             /**
              * Initializes the system. The configuration information is passed to the
-             * config service to management it. All modules are started (unless their
+             * config service to manage it. All modules are started (unless their
              * configuration information indicates they should be disabled), and web events
              * are hooked up.
-             * @param {Object} config The global configuration object.
+             * @param {Object} [config] The global configuration object. This will be saved
+             *      for future invocations of TLT.init where there is no configuration object.
              * @param {function} [callback] function executed after initialization and destroy
                     the callback function takes one parameter which describes UIC state;
                     its value can be set to "initialized" or "destroyed"
@@ -799,10 +830,21 @@ window.TLT = (function () {
                     throw "init must only be called once!";
                 }
 
+                // Check for config
+                if (!config && !this.config) {
+                    throw "missing configuration.";
+                }
+                config = config || this.config;
+                this.config = config;
+
+                okToCallInit = false;
+
                 // Set the page id.
                 tltPageId = "P." + utils.getRandomString(28);
 
-                okToCallInit = false;
+                // Set the tab id.
+                tltTabId = getTabIndex();
+
                 timeoutCallback = function (event) {
                     event = event || window.event || {};
                     if (event.type === "load" || document.readyState !== "loading") {
@@ -814,9 +856,6 @@ window.TLT = (function () {
                             window.detachEvent("onload", timeoutCallback);
                         }
                         _init(config, callback);
-
-                        // Set the tab id.
-                        tltTabId = getTabIndex();
                     }
                 };
 
@@ -850,10 +889,11 @@ window.TLT = (function () {
             /**
              * Shuts down the system. All modules are stopped and all web events
              * are unsubscribed.
+             * @param {Boolean} [skipEvents] Whether to skip unregistering events.
+             * @param {String} [terminationReason] Optional string describing reason for invoking destroy()
              * @returns {void}
              */
-            // destroy: function (skipEvents, callback) {
-            destroy: function (skipEvents) {
+            destroy: function (skipEvents, terminationReason) {
 
                 var token = "",
                     eventName = "",
@@ -893,14 +933,21 @@ window.TLT = (function () {
                     }
                 }
 
+                // Reset globals
                 isFrameBlacklisted.clearCache();
                 events = {};
+                currentWebEvent = {};
+                mutationCallbacks = [];
+
                 initialized = false;
 
                 // Reset to allow re-initialization.
                 okToCallInit = true;
 
                 state = "destroyed";
+
+                // Set termination reason
+                TLT.terminationReason = terminationReason || state;
 
                 if (typeof _callback === "function") {
                     // Protect against unexpected exceptions since _callback is 3rd party code.
@@ -909,6 +956,13 @@ window.TLT = (function () {
                     } catch (e) {
                         // Do nothing!
                     }
+                }
+
+                // Setup a pageshow listener (if one hasn't been setup previously) to help
+                // reinitialize the SDK on persisted pages.
+                if (!registeredPageshowListener) {
+                    window.addEventListener("pageshow", pageshowListener);
+                    registeredPageshowListener = true;
                 }
             },
 
@@ -948,7 +1002,7 @@ window.TLT = (function () {
                         }
                         this._registerModuleEvents.clearCache();
                     } catch (e) {
-                        core.destroy();
+                        core.destroy(false, "_updateModules: " + e.message);
                         result = false;
                     }
                 } else {
@@ -982,7 +1036,8 @@ window.TLT = (function () {
                 var rv = null,
                     sessionData = null,
                     scName,
-                    scValue;
+                    scValue,
+                    info;
 
                 if (!coreConfig || !coreConfig.sessionDataEnabled) {
                     return null;
@@ -996,8 +1051,14 @@ window.TLT = (function () {
                     scValue = utils.getQueryStringValue(scName, sessionData.sessionQueryDelim);
                 } else {
                     // Either the cookie name is configured or the default is assumed.
-                    scName = sessionData.sessionCookieName || "TLTSID";
-                    scValue = utils.getCookieValue(scName);
+                    scName = sessionData.sessionCookieName;
+                    if (scName) {
+                        scValue = utils.getCookieValue(scName);
+                    } else {
+                        info = TLT.getTLTSessionCookieInfo();
+                        scName = info.tltCookieName;
+                        scValue = info.tltCookieValue;
+                    }
                 }
 
                 if (scName && scValue) {
@@ -1219,8 +1280,6 @@ window.TLT = (function () {
                             queueService.flush();
                             fullDOMFlushed = true;
                         }
-                    } else {
-                        dcid = null;
                     }
                 }
                 return dcid;
@@ -1491,6 +1550,8 @@ window.TLT = (function () {
              *                }
              *                If the callbacks array is empty then any previously
              *                registered callbacks would be removed.
+             *                If the enabled flag is set to false then the matching
+             *                callback entry (if any) will be removed.
              * @returns {boolean} true if callbacks were registered. false otherwise.
              */
             registerBridgeCallbacks: function (callbacks) {
@@ -1500,6 +1561,7 @@ window.TLT = (function () {
                     cbEntry,
                     cbList,
                     cbListLen,
+                    matched,
                     utils = TLT.utils;
 
                 // Sanity check
@@ -1522,8 +1584,10 @@ window.TLT = (function () {
                             };
 
                             if (utils.isUndefOrNull(bridgeCallbacks[cb.cbType])) {
-                                // If this is the first callback then directly save it as an object.
-                                bridgeCallbacks[cb.cbType] = cbEntry;
+                                if (cbEntry.enabled) {
+                                    // If this is the first callback then directly save it as an object.
+                                    bridgeCallbacks[cb.cbType] = cbEntry;
+                                }
                             } else {
                                 // If multiple callbacks of the same type are being registered then switch
                                 // to using an array and storing them in the specified order.
@@ -1531,12 +1595,27 @@ window.TLT = (function () {
                                     bridgeCallbacks[cb.cbType] = [ bridgeCallbacks[cb.cbType] ];
                                 }
                                 cbList = bridgeCallbacks[cb.cbType];
-                                for (j = 0, cbListLen = cbList.length; j < cbListLen; j += 1) {
-                                    if (cbList[j].cbOrder > cbEntry.cbOrder) {
+                                for (j = 0, matched = false, cbListLen = cbList.length; j < cbListLen; j += 1) {
+                                    if (cbList[j].cbOrder === cbEntry.cbOrder && cbList[j].cbFunction === cbEntry.cbFunction) {
+                                        matched = true;
+                                        // Matching callback already exists
+                                        if (!cbEntry.enabled) {
+                                            // Delete the callback
+                                            cbList.splice(j, 1);
+                                            if (!cbList.length) {
+                                                delete bridgeCallbacks[cb.cbType];
+                                            }
+                                        }
+                                    } else if (cbList[j].cbOrder > cbEntry.cbOrder) {
                                         break;
                                     }
                                 }
-                                cbList.splice(j, 0, cbEntry);
+                                if (!matched) {
+                                    if (cbEntry.enabled) {
+                                        // Add to callbacks list
+                                        cbList.splice(j, 0, cbEntry);
+                                    }
+                                }
                             }
                         }
                     }
@@ -1570,7 +1649,7 @@ window.TLT = (function () {
                     // Remove callback if found.
                     i = mutationCallbacks.indexOf(cb);
                     if (i !== -1) {
-                        mutationCallbacks.splice(i--, 1);
+                        mutationCallbacks.splice(i, 1);
                     }
                 }
                 return true;
@@ -1678,8 +1757,18 @@ window.TLT = (function () {
             },
 
             _hasSameOrigin: function (iframe) {
+                var hasSameOrigin = false;
+
                 try {
-                    return iframe.document.location.host === document.location.host && iframe.document.location.protocol === document.location.protocol;
+                    hasSameOrigin = iframe.document.location.host === document.location.host && iframe.document.location.protocol === document.location.protocol;
+
+                    //in case that host domain does not match, check if document.domain matches or not
+                    //e.g. a page loads an iframe page with sub-domain address
+                    if (!hasSameOrigin) {
+                        hasSameOrigin = iframe.document.domain === document.domain;
+                    }
+
+                    return hasSameOrigin;
                 } catch (e) {
                     // to be ignored. Error when iframe from different domain
                     //#ifdef DEBUG
@@ -1871,7 +1960,8 @@ window.TLT = (function () {
                     return (iFrameWindow !== null) &&
                             core._hasSameOrigin(iFrameWindow) &&
                             (iFrameWindow.document !== null) &&
-                            iFrameWindow.document.readyState === "complete";
+                            iFrameWindow.document.readyState === "complete" &&
+                            iFrameWindow.document.body.innerHTML !== "";
                 }
 
                 // actual implementation of core._registerModuleEvents
@@ -1900,24 +1990,25 @@ window.TLT = (function () {
                                 continue;
                             }
 
+                            // Frame is not loaded
                             frameLoadPending += 1;
 
-                            (function (moduleName, moduleEvents, hIFrame) {
-                                var hIFrameWindow = null,
+                            (function (_moduleName, _moduleEvents, _hIFrame) {
+                                var _hIFrameWindow = null,
                                     _iframeContext = {
-                                        moduleName: moduleName,
-                                        moduleEvents: moduleEvents,
-                                        hIFrame: hIFrame,
+                                        moduleName: _moduleName,
+                                        moduleEvents: _moduleEvents,
+                                        hIFrame: _hIFrame,
 
                                         _registerModuleEventsDelayed: function () {
-                                            var hIFrameWindow = null;
+                                            var __hIFrameWindow = null;
 
-                                            if (!isFrameBlacklisted(hIFrame)) {
-                                                hIFrameWindow = utils.getIFrameWindow(hIFrame);
-                                                if (core._hasSameOrigin(hIFrameWindow)) {
-                                                    core._registerModuleEvents(moduleName, moduleEvents, hIFrameWindow.document);
+                                            if (!isFrameBlacklisted(_hIFrame)) {
+                                                __hIFrameWindow = utils.getIFrameWindow(_hIFrame);
+                                                if (core._hasSameOrigin(__hIFrameWindow)) {
+                                                    core._registerModuleEvents(_moduleName, _moduleEvents, __hIFrameWindow.document);
                                                     // Notify the domCapture service to observe this frame window
-                                                    domCaptureService.observeWindow(hIFrameWindow);
+                                                    domCaptureService.observeWindow(__hIFrameWindow);
                                                 }
                                             }
                                             frameLoadPending -= 1;
@@ -1931,13 +2022,13 @@ window.TLT = (function () {
                                         }
                                     };
 
-                                utils.addEventListener(hIFrame, "load", function () {
+                                utils.addEventListener(_hIFrame, "load", function () {
                                     _iframeContext._registerModuleEventsDelayed();
                                 });
 
-                                if (utils.isLegacyIE && _isFrameLoaded(hIFrame)) {
-                                    hIFrameWindow = utils.getIFrameWindow(hIFrame);
-                                    utils.addEventListener(hIFrameWindow.document, "readystatechange", function () {
+                                if (utils.isLegacyIE && _isFrameLoaded(_hIFrame)) {
+                                    _hIFrameWindow = utils.getIFrameWindow(_hIFrame);
+                                    utils.addEventListener(_hIFrameWindow.document, "readystatechange", function () {
                                         _iframeContext._registerModuleEventsDelayed();
                                     });
                                 }
@@ -1999,8 +2090,8 @@ window.TLT = (function () {
             _buildToken4bubbleTarget: function (eventType, target, checkIframe, delegateTarget) {
                 var localTop = core._getLocalTop(),
                     localWindow,
-                    _getIframeElement = function (documentScope) {
-                        var retVal = null;
+                    _getIframeElement = function (_documentScope) {
+                        var _retVal = null;
 
                         if (core._hasSameOrigin(localWindow.parent)) {
                             utils.forEach(browserService.queryAll("iframe, frame", localWindow.parent.document), function (iframe) {
@@ -2008,19 +2099,18 @@ window.TLT = (function () {
 
                                 if (!isFrameBlacklisted(iframe)) {
                                     iFrameWindow = utils.getIFrameWindow(iframe);
-                                    if (core._hasSameOrigin(iFrameWindow) && iFrameWindow.document === documentScope) {
-                                        retVal = iframe;
+                                    if (core._hasSameOrigin(iFrameWindow) && iFrameWindow.document === _documentScope) {
+                                        _retVal = iframe;
                                     }
                                 }
                             });
                         }
-                        return retVal;
+                        return _retVal;
                     },
                     documentScope = utils.getDocument(target),
                     iframeElement = null,
                     tmpTarget,
-                    retVal = eventType,
-                    idData;
+                    retVal = eventType;
 
                 if (documentScope) {
                     localWindow = documentScope.defaultView || documentScope.parentWindow;
@@ -2074,7 +2164,7 @@ window.TLT = (function () {
                     // generate the explicit token for the element which received the event
                     // if event is delegated it will have event.data set to the token
                     token = (event.delegateTarget && event.data) ? event.data : core._buildToken4currentTarget(event),
-                    modules = null,
+                    _modules = null,
                     i,
                     len,
                     target,
@@ -2122,16 +2212,15 @@ window.TLT = (function () {
                             canIgnore = true;
                         } else {
                             utils.forEach(coreConfig.ieExcludedLinks, function (selector) {
-                                var i,
-                                    len,
+                                var j,
+                                    elLen,
                                     el = browserService.queryAll(selector);
 
-                                for (i = 0, len = el ? el.length : 0; i < len; i += 1) {
-                                    if (typeof el[i] !== undefined && el[i] === lastClickedElement) {
+                                for (j = 0, elLen = el ? el.length : 0; j < elLen; j += 1) {
+                                    if (el[j] && el[j] === lastClickedElement) {
                                         // Last clicked element was in the blacklist. Set the ignore flag.
                                         canIgnore = true;
-                                        currentWebEvent = {};
-                                        return;
+                                        break;
                                     }
                                 }
                             });
@@ -2183,9 +2272,9 @@ window.TLT = (function () {
                 }
 
                 if (events.hasOwnProperty(token)) {
-                    modules = events[token];
-                    for (i = 0, len = modules.length; i < len; i += 1) {
-                        moduleName = modules[i];
+                    _modules = events[token];
+                    for (i = 0, len = _modules.length; i < len; i += 1) {
+                        moduleName = _modules[i];
                         module = core.getModule(moduleName);
                         modEvent = utils.mixin({}, event);
                         if (module && core.isStarted(moduleName) && typeof module.onevent === "function") {
@@ -2198,7 +2287,7 @@ window.TLT = (function () {
                 }
 
                 if (modEvent && modEvent.type === "unload" && canPublish) {
-                    core.destroy();
+                    core.destroy(false, modEvent.type);
                 }
 
                 currentWebEvent = {};
@@ -2425,10 +2514,8 @@ window.TLT = (function () {
              * @returns {void}
              */
             broadcast: function (message) {
-                var i = 0,
-                    len = 0,
-                    prop = null,
-                    module = null;
+                var prop,
+                    module;
 
                 if (message && typeof message === "object") {
 
@@ -2472,11 +2559,11 @@ window.TLT = (function () {
             fail: function (message, failcode, skipEvents) {
                 message = "UIC FAILED. " + message;
                 try {
-                    core.destroy(!!skipEvents);
-                } finally {
+                    core.destroy(!!skipEvents, message);
+                } catch (e) {
                     utils.clog(message);
-                    throw new core.UICError(message, failcode);
                 }
+                throw new core.UICError(message, failcode);
             },
 
             /**
@@ -2504,31 +2591,51 @@ window.TLT = (function () {
             },
 
             /**
-             * Determines if endpoint is cross-origin
-             * @param {String} endpoint The endpoint needs to be checked.
-             * @param {String} pageURL Current URL.
-             * @returns {boolean} Whether endpoint is cross-origin.
+             * Determines if a url is cross-origin
+             * @param {String} url The URL that needs to be checked.
+             * @param {String} [origin] Optional origin against which to perform the check. If not specified, defaults to window.location.origin
+             * @returns {boolean} true if the url is cross-origin.
              */
-            isCrossOrigin: function (endpoint, pageURL) {
-                var isCrossOrigin,
-                    host,
-                    pageURLArray = [];
+            isCrossOrigin: function (url, origin) {
+                var isCrossOrigin = false,
+                    protocolIndex,
+                    urlSlashSlash;
 
-                if (pageURL) {
-                    pageURLArray = pageURL.split("//");
-                }
-                host = pageURLArray.length > 1 ? pageURLArray[1] : pageURL;
-                if (host) {
-                    host = host.split(":")[0];
+                origin = origin || window.location.origin;
+
+                // Sanity check
+                if (!url || !origin) {
+                    return isCrossOrigin;
                 }
 
-                if (endpoint && host
-                        && (endpoint.match(/^\s*http/) || endpoint.match(/^\s*\/\//))
-                        && !(endpoint.match(host))) {
-                    isCrossOrigin = true;
+                // URL starts with "//" e.g. "//collector.cloud.com/collector/collectorPost"
+                urlSlashSlash = url.match(/^\/\//);
+
+                if (url.match(/^\//) && !urlSlashSlash) {
+                    // URL starts with "/" and therefore is a relative path i.e. same-origin
+                    isCrossOrigin = false;
+                } else if (urlSlashSlash || url.indexOf("://") !== -1) {
+                    // URL starts with "//" or has a protocol e.g. file://... http://... etc
+                    if (urlSlashSlash) {
+                        // If URL starts with "//", compare with origin after removing the protocol from the origin
+                        protocolIndex = origin.indexOf("://");
+                        if (protocolIndex !== -1) {
+                            // Remove protocol from the origin (including the ":")
+                            origin = origin.substring(protocolIndex + 1);
+                        }
+                    }
+
+                    if (url.length < origin.length) {
+                        isCrossOrigin = true;
+                    } else {
+                        // Check if the URL starts with the same origin prefix
+                        isCrossOrigin = (origin !== url.substring(0, origin.length)) || (url.length > origin.length && url.charAt(origin.length) !== '/');
+                    }
                 } else {
+                    // URL does not begin with "//" nor does it have any protocol, therefore it is a relative url.
                     isCrossOrigin = false;
                 }
+
                 return isCrossOrigin;
             }
         };  // End of "core"
@@ -2557,8 +2664,7 @@ window.TLT = (function () {
          * @private
          */
         function inactivityTimeoutHandler() {
-            utils.clog("UIC self-terminated due to inactivity timeout.");
-            core.destroy();
+            core.destroy(false, "inactivity");
         }
 
         /**
@@ -2578,6 +2684,38 @@ window.TLT = (function () {
     };
 
     /**
+     * Parse and return the session id value from localStorage.
+     * @function
+     * @private
+     * @param {String} sidKey The session id key.
+     * @return {String}|undefined Returns the session id value if found, else returns undefined.
+     */
+    function getSIDFromStorage(sidKey) {
+        var expires,
+            items,
+            itemVal,
+            sidValue;
+
+        // Sanity check
+        if (!localStorage || !sidKey) {
+            return;
+        }
+
+        itemVal = localStorage.getItem(sidKey);
+        if (itemVal) {
+            items = itemVal.split("|");
+            expires = parseInt(items[0], 10);
+            if (Date.now() > expires) {
+                localStorage.removeItem(sidKey);
+            } else {
+                sidValue = items[1];
+            }
+        }
+
+        return sidValue;
+    }
+
+    /**
      * Actual init function called from TLT.init when the DOM is ready.
      * @private
      * @see TLT.init
@@ -2592,12 +2730,13 @@ window.TLT = (function () {
             killswitchURL,
             pageURL = null,
             i,
+            blockedUA,
             eventName,
             eventTarget,
             screenviewLoadHandler;
 
+        // Sanity check
         if (initialized) {
-            utils.clog("TLT.init() called more than once. Ignoring.");
             return;
         }
 
@@ -2608,32 +2747,43 @@ window.TLT = (function () {
 
         configService = core.getService("config");
         configService.updateConfig(config);
+        coreConfig = configService.getCoreConfig();
+
+        // Check for any bot match
+        blockedUA = getBlockedUA(coreConfig.blockedUserAgents, navigator.userAgent);
+        if (blockedUA) {
+            TLT.terminationReason = "blockedUA: " + blockedUA;
+            return;
+        }
 
         // Setup cached service references
         ajaxService = core.getService("ajax");
-        browserBaseService = core.getService("browserBase");
-        browserService = core.getService("browser");
+        utils.browserBaseService = browserBaseService = core.getService("browserBase");
+        utils.browserService = browserService = core.getService("browser");
         domCaptureService = core.getService("domCapture");
         queueService = core.getService("queue");
         serializerService = core.getService("serializer");
 
-        coreConfig = configService.getCoreConfig();
-
-        // Check if sessionization cookie value is "DND" indicating kill switch is enabled.
         cookieModuleConfig = configService.getModuleConfig("TLCookie") || {};
         sessionCookieName = cookieModuleConfig.sessionizationCookieName || "TLTSID";
-        sessionCookieValue = utils.getCookieValue(sessionCookieName);
+        // Check if TLTSID cookie value is "DND" indicating kill switch is enabled.
+        sessionCookieValue = utils.getCookieValue("TLTSID");
         if (sessionCookieValue === "DND") {
             if (state !== "destroyed") {
-                core.destroy();
+                core.destroy(false, "killswitch");
             }
             return;
+        }
+        sessionCookieValue = utils.getCookieValue(sessionCookieName) || getSIDFromStorage(sessionCookieName);
+        if (!sessionCookieValue) {
+            sessionCookieName = cookieModuleConfig.wcxCookieName || "WCXSID";
+            sessionCookieValue = utils.getCookieValue(sessionCookieName);
         }
 
         // Enable modules
         if (!core._updateModules()) {
             if (state !== "destroyed") {
-                core.destroy();
+                core.destroy(false, "modules init");
             }
             return;
         }
@@ -2661,12 +2811,12 @@ window.TLT = (function () {
         }
         for (i = 0; i < queues.length; i += 1) {
             if (pageURL && core.isCrossOrigin(queues[i].endpoint, pageURL)) {
-                utils.clog("UIC terminated because IE 9 and below doesn't support cross-origin XHR");
                 core.setAutoFlush(false);
-                core.destroy();
+                core.destroy(false, "CORS not supported");
                 return;
             }
-            // Killswitch check only if session was newly created.
+            // Killswitch check only if session is being newly created. i.e. no prior sessionCookieValue
+            // TODO: UIC could be configured to use storage for session value
             if (!sessionCookieValue && cookieModuleConfig.tlAppKey) {
                 endpointURL = queues[i].endpoint;
                 killswitchURL = queues[i].killswitchURL || (endpointURL.match("collectorPost") ?
@@ -2680,8 +2830,8 @@ window.TLT = (function () {
                         oncomplete: function (result) {
                             if (result.responseText === "0" || result.data === 0) {
                                 core.setAutoFlush(false);
-                                utils.setCookie(sessionCookieName, "DND");
-                                core.destroy();
+                                utils.setCookie("TLTSID", "DND");
+                                core.destroy(false, "killswitch");
                             }
                         }
                     });
@@ -2838,6 +2988,8 @@ window.TLT = (function () {
 
         _isOperaMini = (ua.indexOf("opera mini") !== -1),
 
+        _isSafari = (ua.indexOf("chrome") === -1) && (ua.indexOf("safari") !== -1),
+
         tltUniqueIndex = 1,
 
         tlTypes = {
@@ -2909,6 +3061,11 @@ window.TLT = (function () {
              * Indicates if the browser is Opera Mini.
              */
             isOperaMini: _isOperaMini,
+
+            /**
+             * Indicates if the browser is Safari.
+             */
+            isSafari: _isSafari,
 
             /**
              * Checks whether given parameter is null or undefined
@@ -3290,7 +3447,8 @@ window.TLT = (function () {
                     i,
                     len;
 
-                if (typeof path !== "string" || (typeof obj !== "object" && obj !== null)) {
+                // Sanity check
+                if (typeof path !== "string" || typeof obj !== "object") {
                     return;
                 }
                 arr = path.split(".");
@@ -3397,8 +3555,6 @@ window.TLT = (function () {
                     properties = tagnames[tagName] || null,
                     selectedOption = null,
                     state = null,
-                    i = 0,
-                    len = 0,
                     alias = null,
                     key = "";
 
@@ -3425,6 +3581,7 @@ window.TLT = (function () {
 
                 // Special processing for select lists
                 if (tagName === "select" && target.options && !isNaN(target.selectedIndex)) {
+                    state = state || {};
                     state.index = target.selectedIndex;
                     if (state.index >= 0 && state.index < target.options.length) {
                         selectedOption = target.options[target.selectedIndex];
@@ -3503,10 +3660,12 @@ window.TLT = (function () {
                 retObj.path = (location.pathname || "").split(";", 1)[0];
 
                 // This is needed for Native hybrid replay to get file path of webview assets used.
-                if (retObj.origin.indexOf("file://") > -1) {
+                if (retObj.origin.indexOf("file://") > -1 || (utils.isiOS && window.Ionic)) {
                     temp = retObj.path.match(/(.*)(\/.*app.*)/);
                     if (temp !== null) {
                         retObj.path = temp[2];
+                        // Set host to fix replay images for Ionic app only
+                        retObj.origin = "file://";
                     }
                 }
 
@@ -3514,8 +3673,8 @@ window.TLT = (function () {
                 search = location.search || "";
                 try {
                     searchParams = new URLSearchParams(search);
-                    searchParams.forEach(function (value, key) {
-                        queryParamsTmp[key] = value;
+                    searchParams.forEach(function (_value, _key) {
+                        queryParamsTmp[_key] = _value;
                     });
                 } catch (e) {
                     // URLSearchParams is not supported, parse queries manually
@@ -3579,13 +3738,7 @@ window.TLT = (function () {
                 } else if (typeof node === "string") {
                     tagName = node.toLowerCase();
                 } else {
-                    if (node.tagName) {
-                        tagName = node.tagName.toLowerCase();
-                    } else if (node.nodeName) {
-                        tagName = node.nodeName.toLowerCase();
-                    } else {
-                        tagName = "";
-                    }
+                    tagName = (node.tagName || node.nodeName || "").toLowerCase();
                 }
                 return tagName;
             },
@@ -3667,6 +3820,33 @@ window.TLT = (function () {
                 return mode;
             },
 
+            /**
+             * Get orientation in degrees.
+             * @function
+             * @name core.utils.getOrientationAngle
+             * @return {number} An orientation value such as
+             *          0, -90, 90, 180, 270, 360.
+             */
+            getOrientationAngle: function () {
+                if (typeof window.orientation === "number") {
+                    return window.orientation;
+                }
+
+                var angle = (screen.orientation || {}).angle;
+                if (typeof angle !== "number") {
+                    switch (screen.mozOrientation || screen.msOrientation) {
+                    case "landscape-primary":
+                    case "landscape-secondary":
+                        angle = 90;
+                        break;
+                    default:
+                        angle = 0;
+                        break;
+                    }
+                }
+                return angle;
+            },
+
             clog: (function (window) {
                 return function () {
                     // Do nothing!
@@ -3729,15 +3909,28 @@ window.TLT = (function () {
              * @param {string} [path] The absolute path. If none is specified, defaults to "/"
              * @param {string} [domain] The domain on which to set the cookie. If none is specified, defaults to location.hostname
              * @param {Boolean} [secure] If the secure flag should be set for this cookie.
+             * @param {String} [samesite] The samesite setting that should be set for this cookie. Default is "Strict"
              */
-            setCookie: function (cookieName, cookieValue, maxAge, path, domain, secure) {
+            setCookie: function (cookieName, cookieValue, maxAge, path, domain, secure, samesite) {
                 var i,
                     len,
                     domainArray,
                     expiry,
                     maxAgeStr = "",
                     pathStr,
-                    secureStr = secure ? ";secure" : "";
+                    secureStr,
+                    samesiteStr;
+
+                // Browsers require secure attribute be set when samesite is "None"
+                if (samesite === "None") {
+                    secure = true;
+                } else if (samesite !== "Lax") {
+                    // "Strict" is the default setting.
+                    samesite = "Strict";
+                }
+                samesiteStr = ";SameSite=" + samesite;
+
+                secureStr = secure ? ";Secure" : "";
 
                 // Sanity check
                 if (!cookieName) {
@@ -3749,29 +3942,29 @@ window.TLT = (function () {
                 cookieValue = encodeURIComponent(cookieValue);
 
                 domainArray = (domain || location.hostname).split('.');
-                pathStr = ";path=" + (path || "/");
+                pathStr = ";Path=" + (path || "/");
                 if (typeof maxAge === "number") {
                     if (this.isIE) {
                         expiry = new Date();
                         expiry.setTime(expiry.getTime() + (maxAge * 1000));
                         // IE does not support max-age but instead uses Expires
-                        maxAgeStr = ";expires=" + expiry.toUTCString();
+                        maxAgeStr = ";Expires=" + expiry.toUTCString();
                     } else {
-                        maxAgeStr = ";max-age=" + maxAge;
+                        maxAgeStr = ";Max-Age=" + maxAge;
                     }
                 }
 
                 // Try to set the cookie with two domain components. e.g. "foo.com".
                 // If not successful try with three domain components, e.g. "foo.co.uk" and so on.
                 for (len = domainArray.length, i = (len === 1 ? 1 : 2); i <= len; i += 1) {
-                    document.cookie = cookieName + "=" + cookieValue + ";domain=" + domainArray.slice(-i).join('.') + pathStr + maxAgeStr + secureStr;
+                    document.cookie = cookieName + "=" + cookieValue + ";Domain=" + domainArray.slice(-i).join('.') + pathStr + maxAgeStr + secureStr + samesiteStr;
                     if (this.getCookieValue(cookieName) === cookieValue) {
                         break;
                     }
                     if (len === 1) {
                         // Special case when trying to set cookie on single component domain fails.
                         // Try to set the cookie without explicitly specifying the domain.
-                        document.cookie = cookieName + "=" + cookieValue + pathStr + maxAgeStr + secureStr;
+                        document.cookie = cookieName + "=" + cookieValue + pathStr + maxAgeStr + secureStr + samesiteStr;
                     }
                 }
             },
@@ -3918,6 +4111,7 @@ window.TLT = (function () {
                     return matchIndex;
                 }
 
+                // Check if services have been previouly cached
                 if (!this.browserService || !this.browserBaseService) {
                     this.browserService = TLT.getService("browser");
                     this.browserBaseService = TLT.getService("browserBase");
@@ -4316,7 +4510,15 @@ TLT.ModuleContext = (function () {
          * @function
          * @returns {object} Returns tab id.
          */
-        "getTabId"
+        "getTabId",
+
+        /**
+         * @name setSessionCookieInfo
+         * @memberOf TLT.ModuleContext#
+         * @function
+         * @returns {void}
+         */
+        "setSessionCookieInfo"
     ];
 
     /**
@@ -4330,14 +4532,14 @@ TLT.ModuleContext = (function () {
 
         // If you want to add methods that aren't directly mapped from TLT, do it here
         var context = {},
-            i = 0,
-            len = methodsToExpose.length,
+            i,
+            len,
             parts = null,
             coreMethod = null,
             contextMethod = null;
 
         // Copy over all methods onto the context object
-        for (i = 0; i < len; i += 1) {
+        for (i = 0, len = methodsToExpose.length; i < len; i += 1) {
 
             // Check to see if the method names are the same or not
             parts = methodsToExpose[i].split(":");
@@ -4349,7 +4551,7 @@ TLT.ModuleContext = (function () {
                 coreMethod = parts[0];
             }
 
-            context[contextMethod] = (function (coreMethod) {
+            context[contextMethod] = (function (_coreMethod) {
 
                 return function () {
 
@@ -4359,7 +4561,7 @@ TLT.ModuleContext = (function () {
 
 
                     // Pass through to the Core
-                    return core[coreMethod].apply(core, args);
+                    return core[_coreMethod].apply(core, args);
                 };
 
             }(coreMethod));
@@ -4767,7 +4969,7 @@ TLT.addService("queue", function (core) {
         if (result && result.id) {
             // Diagnostic logging
             utils.extend(true, xhrLog[result.id - 1], {
-                xhrRspEnd: mS.createMessage({type: 0}).offset,
+                rspEnd: mS.createMessage({type: 0}).offset,
                 success: result.success,
                 statusCode: result.statusCode,
                 statusText: result.statusText
@@ -4833,8 +5035,8 @@ TLT.addService("queue", function (core) {
      * @return {Object} The object containing the copied headers.
      */
     function copyHeaders(queueId, headerObj) {
-        var i = 0,
-            len = 0,
+        var i,
+            len,
             queue = queueManager.get(queueId),
             qHeaders = queue.headers,
             headersList = null;
@@ -4842,12 +5044,12 @@ TLT.addService("queue", function (core) {
         headerObj = headerObj || {};
 
         function copy(l, o) {
-            var i = 0,
-                len = 0,
+            var j,
+                len,
                 header = null;
 
-            for (i = 0, len = l.length; i < len; i += 1) {
-                header = l[i];
+            for (j = 0, len = l.length; j < len; j += 1) {
+                header = l[j];
                 o[header.name] = header.value;
             }
         }
@@ -4960,7 +5162,7 @@ TLT.addService("queue", function (core) {
             httpHeaders = {
                 "Content-Type": "application/json",
                 "X-PageId": core.getPageId(),
-                "X-Tealeaf": "device (UIC) Lib/5.7.0.1915",
+                "X-Tealeaf": "device (UIC) Lib/6.0.0.1960",
                 "X-TealeafType": "GUI",
                 "X-TeaLeaf-Page-Url": getUrlPath(),
                 "X-Tealeaf-SyncXHR": (!!sync).toString()
@@ -4973,6 +5175,9 @@ TLT.addService("queue", function (core) {
             retObj,
             timeDiff,
             tltWorker = CONFIG.tltWorker,
+            unloading = core.getState() === "unloading",
+            pageOrigin = utils.getOriginAndPath().origin,
+            crossOriginRequest = core.isCrossOrigin(queue.url, pageOrigin),
             workerMsg,
             xdomainFrameWindow = null;
 
@@ -4982,7 +5187,7 @@ TLT.addService("queue", function (core) {
 
         // Safety check to ensure the data to be sent is not stale beyond the inactivity timeout
         timeDiff = currOffset - data[count - 1].offset;
-        if (timeDiff > (inactivityTimeout + 60000)) {
+        if (inactivityTimeout && timeDiff > (inactivityTimeout + 60000)) {
             return;
         }
 
@@ -4996,32 +5201,30 @@ TLT.addService("queue", function (core) {
         // Wrap the messages with the header
         data = mS.wrapMessages(data);
 
-        // Diagnostic logging if enabled
-        if (CONFIG.xhrLogging) {
-            // Set the XHR message id to the same as the serialNumber of this message
-            messageId = data.serialNumber;
+        // Set the XHR message id to the same as the serialNumber of this message
+        messageId = data.serialNumber;
 
-            xhrLog[messageId - 1] = {
-                serialNumber: messageId,
-                xhrReqStart: currOffset
-            };
+        // Diagnostic logging
+        xhrLog[messageId - 1] = {
+            serialNumber: messageId,
+            reqStart: currOffset
+        };
 
-            // Send the xhr log as part of the message
-            data.log = {
-                xhr: xhrLog
-            };
+        // Send the xhr log as part of the message
+        data.log = {
+            requests: xhrLog
+        };
 
-            // Log if endpoint check failed
-            if (CONFIG.endpointCheckFailed) {
-                data.log.endpointCheckFailed = true;
-            }
+        // Log if endpoint check failed
+        if (CONFIG.endpointCheckFailed) {
+            data.log.endpointCheckFailed = true;
         }
 
         getExternalRequestHeaders();
         copyHeaders(queueId, httpHeaders);
 
-        // Check if the TLT Web Worker is available and we are not trying to make a sync request
-        if (tltWorker && !sync) {
+        // Check if the TLT Web Worker is available and we are not trying to make a sync request or unloading
+        if (tltWorker && !(sync || unloading)) {
             tltWorker.onmessage = function (event) {
                 var result;
                 result = event.data;
@@ -5032,7 +5235,9 @@ TLT.addService("queue", function (core) {
                 id: messageId,
                 url: queue.url,
                 headers: httpHeaders,
-                data: data
+                data: data,
+                isUnloading: unloading,
+                isCrossOrigin: crossOriginRequest
             };
             tltWorker.postMessage(workerMsg);
         } else {
@@ -5097,6 +5302,8 @@ TLT.addService("queue", function (core) {
                     oncomplete: handleXhrCallback,
                     url: queue.url,
                     async: !sync,
+                    isUnloading: unloading,
+                    isCrossOrigin: crossOriginRequest,
                     headers: httpHeaders,
                     data: data
                 });
@@ -5114,7 +5321,7 @@ TLT.addService("queue", function (core) {
     function flushAll(sync) {
         var conf = null,
             queues = CONFIG.queues,
-            i = 0;
+            i;
         for (i = 0; i < queues.length; i += 1) {
             conf = queues[i];
             flushQueue(conf.qid, sync);
@@ -5144,9 +5351,9 @@ TLT.addService("queue", function (core) {
         len = queue.data.length;
         if (len) {
             timeDiff = msg.offset - queue.data[len - 1].offset;
-            if (timeDiff > inactivityTimeout) {
-                queueManager.flush(queueId);
-                core.destroy();
+            if (inactivityTimeout && timeDiff > inactivityTimeout) {
+                core.setAutoFlush(false);
+                core.destroy(false, "inactivity(2)");
                 return;
             }
         }
@@ -5218,16 +5425,17 @@ TLT.addService("queue", function (core) {
      * @return {String}            Returns the queue id for the corresponding queue or the default queue id.
      */
     function getQueueId(moduleName) {
-        var conf = null,
+        var i, j,
+            conf = null,
             queues = CONFIG.queues,
             module = "",
-            i = 0,
-            j = 0;
+            qLen,
+            modulesLen;
 
-        for (i = 0; i < queues.length; i += 1) {
+        for (i = 0, qLen = queues.length; i < qLen; i += 1) {
             conf = queues[i];
             if (conf && conf.modules) {
-                for (j = 0; j < conf.modules.length; j += 1) {
+                for (j = 0, modulesLen = conf.modules.length; j < modulesLen; j += 1) {
                     module = conf.modules[j];
                     if (module === moduleName) {
                         return conf.qid;
@@ -5525,8 +5733,7 @@ TLT.addService("browserBase", function (core) {
 
     function checkId(node) {
         var i,
-            len,
-            re;
+            len;
 
         if (!node || !node.id || typeof node.id !== "string") {
             return false;
@@ -5669,8 +5876,7 @@ TLT.addService("browserBase", function (core) {
          * @return {Array} xpath array
          */
         return function (node, wantFullPath, notInDocument) {
-            var i,
-                j,
+            var j,
                 documentElement = document.documentElement,
                 idValid = false,
                 tmpChild = null,
@@ -5923,7 +6129,7 @@ TLT.addService("browserBase", function (core) {
             found = false,
             foundElement = null,
             tagName,
-            i = 0;
+            i;
 
         // skip jQuery event wrapper
         if (isJQueryEvent(e)) {
@@ -6417,7 +6623,7 @@ TLT.addService("browserBase", function (core) {
      * @return {integer} The normalized orientation value.
      */
     function getNormalizedOrientation() {
-        var orientation = (typeof window.orientation === "number") ? window.orientation : 0;
+        var orientation = utils.getOrientationAngle();
 
         /*
          * Special handling for Android based on screen width/height since
@@ -6427,7 +6633,7 @@ TLT.addService("browserBase", function (core) {
         if (utils.isLandscapeZeroDegrees) {
             if (Math.abs(orientation) === 180 || Math.abs(orientation) === 0) {
                 orientation = 90;
-            } else if (Math.abs(orientation) === 90) {
+            } else if (Math.abs(orientation) === 90 || Math.abs(orientation) === 270) {
                 orientation = 0;
             }
         }
@@ -6561,11 +6767,9 @@ TLT.addService("browserBase", function (core) {
      * @param {Boolean} [notInDocument] Indicates if the node is part of a cloned subtree not attached to the document.
      */
     function Xpath(node, notInDocument) {
-        var fullXpath = "",
-            fullXpathList = [],
+        var fullXpathList = [],
             topElem,
             lastElem,
-            xpath = "",
             xpathList = [];
 
         // Sanity check
@@ -6781,7 +6985,6 @@ TLT.addService("browser", function (core) {
     var utils = core.utils,
         configService = core.getService("config"),
         browserBaseService = core.getService('browserBase'),
-        ajaxService = core.getService('ajax'),
         addEventListener = null,
         removeEventListener = null,
         // Need to test for configService in unit testing scenario
@@ -6869,7 +7072,6 @@ TLT.addService("browser", function (core) {
              */
             css: function (query, scope) {
                 var self = this,
-                    message = null,
                     bodyEl = document.getElementsByTagName("body")[0],
                     jQuery = serviceConfig.jQueryObject ? utils.access(serviceConfig.jQueryObject) : window.jQuery,
                     sizzle = serviceConfig.sizzleObject ? utils.access(serviceConfig.sizzleObject) : window.Sizzle;
@@ -7173,18 +7375,20 @@ TLT.addService("ajax", function (core) {
     function makeFetchRequest(message) {
         var headers = message.headers || {},
             msgId = message.id || 0,
+            fetchOptions = {
+                method: message.type,
+                headers: headers,
+                body: message.data,
+                mode: message.isCrossOrigin ? "cors" : "same-origin",
+                credentials: message.isCrossOrigin ? "omit" : "same-origin",
+                keepalive: !message.isCrossOrigin && message.isUnloading,
+                cache: "no-store"
+            },
             oncomplete = message.oncomplete || function () {};
 
         headers["X-Requested-With"] = "fetch";
 
-        window.fetch(message.url, {
-            method: message.type,
-            headers: headers,
-            body: message.data,
-            mode: "cors",
-            //keepalive: true,   // keepalive is not supported for cors requests requiring prefetch
-            cache: "no-store"
-        }).then(function (response) {
+        window.fetch(message.url, fetchOptions).then(function (response) {
             var result = {
                 success: response.ok,
                 statusCode: response.status,
@@ -7432,14 +7636,13 @@ TLT.addService("ajax", function (core) {
          *     This should contain any required query string parameters.
          */
         sendRequest: function (message) {
-            var unloading = core.getState() === "unloading",
-                makeXHRRequest = true,
+            var makeXHRRequest = true,
                 retVal;
 
             message.type = message.type || "POST";
 
             // If enabled, use Beacon API instead of XHR on page unload or when sending synchronous request
-            if ((unloading || !message.async) && useBeacon) {
+            if ((message.isUnloading || !message.async) && useBeacon) {
                 makeXHRRequest = false;
                 retVal = makeBeaconCall(message);
                 if (!retVal) {
@@ -7497,7 +7700,8 @@ TLT.addService("domCapture", function (core) {
             captureShadowDOM: false,
             captureFrames: false,
             removeScripts: true,
-            removeComments: true
+            removeComments: true,
+            captureStyle: true
         },
         defaultDiffObserverConfig = {
             childList: true,
@@ -7519,7 +7723,6 @@ TLT.addService("domCapture", function (core) {
         forceFullDOM = false,
         fullDOMSent = false,
         isInitialized = false,
-        tltUniqueIDIndex = 1,
         dupNode = function () {},
         getDOMCapture = function () {},
         updateConfig = function () {},
@@ -7585,13 +7788,10 @@ TLT.addService("domCapture", function (core) {
         var i,
             len;
 
-        // Sanity check
-        if (!attrList) {
-            return attrList;
-        }
-
-        for (i = 0, len = attrList.length; i < len; i += 1) {
-            delete attrList[i].oldValue;
+        if (attrList) {
+            for (i = 0, len = attrList.length; i < len; i += 1) {
+                delete attrList[i].oldValue;
+            }
         }
 
         return attrList;
@@ -8034,24 +8234,25 @@ TLT.addService("domCapture", function (core) {
     }
 
     /**
-     * Remove child nodes matching the tag name from the node.
+     * Get all child nodes matching the tag name from the node.
      * @private
      * @function
      * @param {DOMNode} node The root or parent DOM Node element
      * @param {String}  tagName The tag to be removed
      * @param {Array}  [attribute] Optional name, value pair to match the tag on.
-     * @returns The node without any tags matching tagName
+     * @returns List of nodes matching tagName
      */
-    function removeTags(node, tagName, attribute) {
+    function getTagList(node, tagName, attribute) {
         var i,
             attrName,
             attrValue,
             nodeList,
-            tag;
+            tag,
+            tagList = [];
 
         // Sanity check
         if (!node || !node.getElementsByTagName || !tagName) {
-            return;
+            return tagList;
         }
 
         if (attribute && attribute.length === 2) {
@@ -8064,12 +8265,61 @@ TLT.addService("domCapture", function (core) {
             for (i = nodeList.length - 1; i >= 0; i -= 1) {
                 tag = nodeList[i];
                 if (!attrName) {
-                    tag.parentNode.removeChild(tag);
+                    tagList.push(tag);
                 } else {
                     if (tag[attrName] === attrValue) {
-                        tag.parentNode.removeChild(tag);
+                        tagList.push(tag);
                     }
                 }
+            }
+        }
+
+        return tagList;
+    }
+
+    /**
+     * Remove child nodes matching the tag name from the node.
+     * @private
+     * @function
+     * @param {DOMNode} node The root or parent DOM Node element
+     * @param {String}  tagName The tag to be removed
+     * @param {Array}  [attribute] Optional name, value pair to match the tag on.
+     * @returns The node without any tags matching tagName
+     */
+    function removeTags(node, tagName, attribute) {
+        var i,
+            tag,
+            tagList;
+
+        tagList = getTagList(node, tagName, attribute);
+
+        for (i = tagList.length - 1; i >= 0; i -= 1) {
+            tag = tagList[i];
+            tag.parentNode.removeChild(tag);
+        }
+
+        return node;
+    }
+
+    /**
+     * Remove base64 nodes which has size larger than the limit.
+     * @private
+     * @function
+     * @param {DOMNode} node The root or parent DOM Node element
+     * @param {Number}  sizelimit The threshold to discard base64 images
+     * @returns The node with base64 images' src removed based on condition
+     */
+    function removeBase64Src(node, sizeLimit) {
+        var i,
+            tag,
+            tagList = getTagList(node, "img"),
+            pattern = new RegExp("^data:image\/(.*?);base64");
+
+        for (i = 0; i < tagList.length; i++) {
+            tag = tagList[i];
+            if (pattern.test(tag.src) && (tag.src.length > sizeLimit)) {
+                tag.src = "";
+                tag.setAttribute("removedByUIC", true);
             }
         }
 
@@ -8381,7 +8631,11 @@ TLT.addService("domCapture", function (core) {
                         if (iframeWindow && iframeWindow.document && iframeWindow.location.href !== "about:blank") {
                             iframeDoc = iframeWindow.document;
 
-                            iframeCapture = getDOMCapture(iframeDoc, iframeDoc.documentElement || iframeDoc, "", options);
+                            /**
+                             * Use the document instead of the documentElement because of Chrome bug
+                             * https://bugs.chromium.org/p/chromium/issues/detail?id=1042089
+                             */
+                            iframeCapture = getDOMCapture(iframeDoc, iframeDoc, "", options);
                             iframeID = getUniqueID();
 
                             // Set the tltid for this frame in the target DOM
@@ -8618,7 +8872,7 @@ TLT.addService("domCapture", function (core) {
             return;
         }
 
-        untrackedShadowList = enumerateUntrackedShadows(doc, options);
+        untrackedShadowList = enumerateUntrackedShadows(doc);
         for (i = 0, len = untrackedShadowList.length, shadows = []; i < len; i += 1) {
             retObj = getShadowDOM(untrackedShadowList[i][0], null, options, true);
             shadows = shadows.concat(retObj.shadows);
@@ -8643,7 +8897,11 @@ TLT.addService("domCapture", function (core) {
             endTime;
 
 
-        captureObj = getDOMCapture(doc, doc.documentElement || doc, null, options);
+        /**
+         * Use the document instead of the documentElement because of Chrome bug
+         * https://bugs.chromium.org/p/chromium/issues/detail?id=1042089
+         */
+        captureObj = getDOMCapture(doc, doc, null, options);
         if (!captureObj) {
             captureObj = {};
         }
@@ -8681,7 +8939,9 @@ TLT.addService("domCapture", function (core) {
             captureShadowDOM,
             untrackedShadows,
             target,
-            targetXpath;
+            targetXpath,
+            attributes,
+            pattern = new RegExp("^data:image\/(.*?);base64");
 
         // Consolidate the DOM Node mutations
         consolidateTargets(mutatedTargets);
@@ -8725,13 +8985,38 @@ TLT.addService("domCapture", function (core) {
             returnObj.attributeDiffs[diff.xpath][attribute.name] = { value: attribute.value };
         }
 
+        // Helper function to remove base64 src string
+        function removeBase64SrcValue(attrList) {
+            var i,
+                len;
+
+            for (i = 0, len = attrList.length; i < len; i += 1) {
+                if (attrList[i].name === "src" && pattern.test(attrList[i].value) && attrList[i].value.length > options.discardBase64) {
+                    attrList[i].value = "";
+                    attrList.push({name: "removedByUIC", value: true});
+                    break;
+                }
+            }
+
+            return attrList;
+        }
+
         // Add the attribute mutations
         for (i = 0, len = mutatedAttrTargets.length; i < len; i += 1) {
             targetXpath = mutatedAttrTargets[i];
+            attributes = removeOldAttrValues(targetXpath.attributes);
+
+            if (options.hasOwnProperty("discardBase64")) {
+                target = browserBaseService.getNodeFromID(targetXpath.xpath, -2);
+                if (target && target.tagName.toLowerCase() === "img" && attributes) {
+                    attributes = removeBase64SrcValue(attributes);
+                }
+            }
+
             diff = {
                 // If the HTML id attribute itself is being modified then use the full xpath.
                 xpath: hasAttr(targetXpath.attributes, "id") ? targetXpath.fullXpath : targetXpath.xpath,
-                attributes: removeOldAttrValues(targetXpath.attributes)
+                attributes: attributes
             };
             returnObj.diffs.push(diff);
 
@@ -8792,8 +9077,7 @@ TLT.addService("domCapture", function (core) {
             frameCaptureObj,
             shadowDOMObj,
             captureObj = {},
-            serializedDOM,
-            urlInfo;
+            serializedDOM;
 
         // Sanity check
         if (!doc || !root) {
@@ -8825,6 +9109,16 @@ TLT.addService("domCapture", function (core) {
             // Remove comment nodes
             if (!!options.removeComments) {
                 removeNodes(rootCopy, 8);
+            }
+
+            // Remove inline style
+            if (!options.captureStyle) {
+                removeTags(rootCopy, "style");
+            }
+
+            // Remove base64 images, set "discardBase64: 0" to discard all base64 images
+            if (options.hasOwnProperty("discardBase64")) {
+                removeBase64Src(rootCopy, options.discardBase64);
             }
 
             // Set "selected" attribute on select list elements
@@ -8910,9 +9204,6 @@ TLT.addService("domCapture", function (core) {
          * @param  {DOMWindow} win The window object to be added.
          */
         observeWindow: function (win) {
-            var i,
-                len;
-
             if (!win) {
                 return;
             }
@@ -9201,6 +9492,7 @@ TLT.addService("message", function (core) {
     "use strict";
 
     var utils = core.utils,
+        tabId = core.getTabId(),
         prevScreenviewOffsetTime = 0,
         screenviewOffsetTime = 0,
         count             = 0,
@@ -9336,8 +9628,8 @@ TLT.addService("message", function (core) {
      */
     privacyMasks.PVC_MASK_TYPE = function (value) {
         var characters,
-            i = 0,
-            len = 0,
+            i,
+            len,
             retMask = "";
 
         // Sanity check
@@ -9612,7 +9904,6 @@ TLT.addService("message", function (core) {
             elements = [],
             elementXpath,
             exclude,
-            maskedValue,
             rule,
             target,
             qr;
@@ -9720,7 +10011,6 @@ TLT.addService("message", function (core) {
             excludeMask,
             len,
             mask,
-            maskedValue,
             qr,
             qrLen,
             regexAndXpathRules = [],
@@ -9994,17 +10284,17 @@ TLT.addService("message", function (core) {
          */
         wrapMessages: function (messages) {
             var messagePackage = {
-                messageVersion: "11.0.0.0",
+                messageVersion: "12.0.0.0",
                 serialNumber: (count += 1),
                 sessions: [{
                     id: core.getPageId(),
-                    tabId: core.getTabId(),
+                    tabId: tabId,
                     startTime: sessionStart.getTime(),
                     timezoneOffset: sessionStart.getTimezoneOffset(),
                     messages: messages,
                     clientEnvironment: {
                         webEnvironment: {
-                            libVersion: "5.7.0.1915",
+                            libVersion: "6.0.0.1960",
                             domain: windowHostname,
                             page: windowHref,
                             referrer: document.referrer,
@@ -10237,6 +10527,7 @@ TLT.addModule("TLCookie", function (context) {
     "use strict";
 
     var moduleConfig = {},
+        reqHeaders = [],
         sessionIDStorageTTL = 0,
         sessionIDUsesCookie = true,
         sessionIDUsesStorage = false,
@@ -10271,8 +10562,7 @@ TLT.addModule("TLCookie", function (context) {
      */
     function createTLTSIDCookie() {
         var cookieValue = generateTLTSID(),
-            secure = !!moduleConfig.secureTLTSID,
-            undefined;
+            secure = !!moduleConfig.secureTLTSID;
 
         // Set the session cookie
         utils.setCookie(tltCookieName, cookieValue, undefined, undefined, undefined, secure);
@@ -10355,6 +10645,16 @@ TLT.addModule("TLCookie", function (context) {
     }
 
     /**
+     * Callback function
+     * @function
+     * @private
+     * @returns {Array} List of request headers in { name, value } pairs.
+     */
+    function addReqHeaders() {
+        return reqHeaders;
+    }
+
+    /**
      * Process the module configuration and setup the corresponding cookies and tokens.
      * Setup the callback to add the respective headers when the library POSTs.
      * @function
@@ -10362,7 +10662,7 @@ TLT.addModule("TLCookie", function (context) {
      * @param {object} config The module configuration.
      */
     function processConfig(config) {
-        var reqHeaders = [];
+        reqHeaders = [];
 
         sessionIDUsesCookie = utils.getValue(config, "sessionIDUsesCookie", true);
         sessionIDUsesStorage = utils.getValue(config, "sessionIDUsesStorage", false);
@@ -10423,6 +10723,7 @@ TLT.addModule("TLCookie", function (context) {
         // A new session id needs to be created. Check for WCXSID before creating a new TLTSID.
         if (!tltCookieValue) {
             if (wcxCookieValue) {
+                tltCookieName = wcxCookieName;
                 tltCookieValue = wcxCookieValue;
             } else {
                 if (sessionIDUsesStorage) {
@@ -10439,6 +10740,7 @@ TLT.addModule("TLCookie", function (context) {
                 }
             }
         }
+        context.setSessionCookieInfo(tltCookieName, tltCookieValue);
 
         // Session id could not be created in either Storage or Cookie!
         if (!tltCookieValue) {
@@ -10457,9 +10759,7 @@ TLT.addModule("TLCookie", function (context) {
                 {
                     enabled: true,
                     cbType: "addRequestHeaders",
-                    cbFunction: function () {
-                        return reqHeaders;
-                    }
+                    cbFunction: addReqHeaders
                 }
             ]);
         }
@@ -10569,6 +10869,16 @@ TLT.addModule("TLCookie", function (context) {
                 // Reset the expiry of the storage session id
                 setSIDInStorage(tltCookieName, tltCookieValue);
             }
+            // Unregister previously registered callback after termination
+            window.setTimeout(function () {
+                TLT.registerBridgeCallbacks([
+                    {
+                        enabled: false,
+                        cbType: "addRequestHeaders",
+                        cbFunction: addReqHeaders
+                    }
+                ]);
+            });
         },
 
         onevent: function (webEvent) {
@@ -10662,7 +10972,7 @@ if (TLT && typeof TLT.addModule === "function") {
                 };
 
             // if id is null or empty, what are we firing on? it can't be replayed anyway
-            if ((typeof uiEvent.target.id) === undefined || uiEvent.target.id === "") {
+            if (!uiEvent.target.id) {
                 return;
             }
 
@@ -10720,10 +11030,6 @@ if (TLT && typeof TLT.addModule === "function") {
             return e;
         }
 
-        function getNativeTarget(e) {
-            return getNativeEvent(e).target;
-        }
-
         function getNodeType(node) {
             node = getNativeNode(node);
             if (!node) { return -1; }
@@ -10734,17 +11040,6 @@ if (TLT && typeof TLT.addModule === "function") {
             node = getNativeNode(node);
             if (!node) { return ""; }
             return node.tagName ? node.tagName.toUpperCase() : "";
-        }
-
-        function stopEventPropagation(e) {
-            if (!e) { return; }
-            if (e.nativeEvent) { e = e.nativeEvent; }
-
-            if (e.stopPropagation) {
-                e.stopPropagation();
-            } else if (e.cancelBubble) {
-                e.cancelBubble();
-            }
         }
 
         function ignoreNode(node) {
@@ -10851,7 +11146,6 @@ if (TLT && typeof TLT.addModule === "function") {
 
                 var addedToQueue = false,
                     hEvent = this,
-                    key = null,
                     idx = 0;
                 if (this.hoverDuration >= getConfigValue("hoverThreshold")) {
                     this.hoverDuration = Math.min(this.hoverDuration, getConfigValue("hoverThresholdMax"));
@@ -11011,7 +11305,6 @@ if (TLT && typeof TLT.addModule === "function") {
                 curKey = curEvent.getKey(),
                 allowedKeyMap = {},
                 key = null,
-                childKey = null,
                 addedToQueue = false,
                 idx = 0;
 
@@ -11221,7 +11514,7 @@ if (TLT && typeof TLT.addModule === "function") {
              * Terminate the overstat module.
              */
             destroy: function () {
-                var key, i;
+                var key;
                 for (key in eventMap) {
                     if (eventMap.hasOwnProperty(key)) {
                         eventMap[key].dispose();
@@ -11299,58 +11592,31 @@ if (TLT && typeof TLT.addModule === "function") {
             config,
             utils = context.utils,
             performanceObserver,
-            performanceAlert = [],
+            alertCount = 0,
             performanceAlertCfg,
             performanceAlertDefaultOptions = {
                 enabled: false,
-                threshold: 2000,
                 // use resourceTypes to specify type of resource to monitor
                 // by default, sdk monitors all resources, e.g. "script", "link", "img", "xmlhttprequest", "iframe" ...
                 resourceTypes: [],
                 // use blacklist to skip monitoring of certain resources by matching the resource name
                 blacklist: []
+                // non-default options
+                // threshold: 2000     --> threshold (milliseconds) to log only slow performance resources
+                // maxAlerts: 100      --> maximum # of alerts to be logged
             };
-
-
-        /**
-         * Returns true if the property is filtered out. The property is considered
-         * to be filtered out if it exists in the filter object with a value of true.
-         * @private
-         * @function
-         * @name performance-isFiltered
-         * @param {string} prop The property name to be tested.
-         * @param {object} [filter] An object that contains property names and their
-         * associated boolean value. A property marked true will be filtered out.
-         * @return {boolean} true if the property is filtered out, false otherwise.
-         */
-        function isFiltered(prop, filter) {
-            // Sanity check
-            if (typeof prop !== "string") {
-                return false;
-            }
-
-            // If there is no filter object then the property is not filtered out.
-            if (!filter || typeof filter !== "object") {
-                return false;
-            }
-
-            return (filter[prop] === true);
-        }
 
         /**
          * Returns the normalized timing object. Normalized values are offsets measured
-         * from the "navigationStart" timestamp which serves as the epoch. Also applies
-         * the filter.
+         * from the "navigationStart" timestamp which serves as the epoch.
          * @private
          * @function
          * @name performance-parseTiming
          * @param {object} timing An object implementing the W3C PerformanceTiming
          * interface.
-         * @param {object} [filter] An object that contains property names and their
-         * associated boolean value. A property marked true will be filtered out.
          * @return {object} The normalized timing properties.
          */
-        function parseTiming(timing, filter) {
+        function parseTiming(timing) {
             var epoch = 0,
                 normalizedTiming = {},
                 prop = "",
@@ -11369,13 +11635,11 @@ if (TLT && typeof TLT.addModule === "function") {
                 // IE_COMPAT: timing.hasOwnProperty does not exist in IE8 and lower for
                 // host objects. Legacy IE does not support hasOwnProperty on hosted objects.
                 if (Object.prototype.hasOwnProperty.call(timing, prop) || typeof timing[prop] === "number") {
-                    if (!isFiltered(prop, filter)) {
-                        value = timing[prop];
-                        if (typeof value === "number" && value && prop !== "navigationStart") {
-                            normalizedTiming[prop] = value - epoch;
-                        } else {
-                            normalizedTiming[prop] = value;
-                        }
+                    value = timing[prop];
+                    if (typeof value === "number" && value && prop !== "navigationStart") {
+                        normalizedTiming[prop] = value - epoch;
+                    } else {
+                        normalizedTiming[prop] = value;
                     }
                 }
             }
@@ -11433,7 +11697,7 @@ if (TLT && typeof TLT.addModule === "function") {
          * @param {object} window The DOM window
          */
         function postPerformanceEvent(window) {
-            var navType = "UNKNOWN",
+            var navType,
                 queueEvent = {
                     type: 7,
                     performance: {}
@@ -11453,10 +11717,10 @@ if (TLT && typeof TLT.addModule === "function") {
 
             if (timing) {
                 // Cannot calculate if the Load event has not occurred yet.
-                if (!timing.loadEventStart) {
+                if (!timing.loadEventStart && !(utils.isSafari && navigation.type === 2)) {
                     return;
                 }
-                queueEvent.performance.timing = parseTiming(timing, config.filter);
+                queueEvent.performance.timing = parseTiming(timing);
                 queueEvent.performance.timing.renderTime = getRenderTime(timing);
             } else if (config.calculateRenderTime) {
                 queueEvent.performance.timing = {
@@ -11507,62 +11771,83 @@ if (TLT && typeof TLT.addModule === "function") {
         }
 
         /**
-         * Record performance data of resources which takes longer than threshold time length
+         * Logs performance data of a resource
          * @private
          * @function
-         * @name performance-processPerformanceEntries
-         * @name {Array} entries Performance entries
+         * @name performance-processPerformanceEntry
+         * @name {object} The performance entry
          */
-        function processPerformanceEntries(entries) {
-            var i, j,
-                entry,
-                name,
-                type,
+        function processPerformanceEntry(entry) {
+            var i,
+                name = entry.name,
+                type = entry.initiatorType,
                 blacklist = performanceAlertCfg.blacklist,
                 blacklistItem,
-                isBlacklisted;
+                isBlacklisted,
+                resourceData;
 
-            for (i = 0; i < entries.length; i += 1) {
-                entry = entries[i];
-                name = entry.name;
-                type = entry.initiatorType;
+            if (performanceAlertCfg.hasOwnProperty("maxAlerts") && alertCount >= performanceAlertCfg.maxAlerts) {
+                return;
+            }
 
-                isBlacklisted = false;
+            if (performanceAlertCfg.hasOwnProperty("threshold") && entry.duration < performanceAlertCfg.threshold) {
+                return;
+            }
 
-                if (performanceAlertCfg.resourceTypes.length > 0 && performanceAlertCfg.resourceTypes.indexOf(type) === -1) {
-                    continue;
-                }
+            //check if resource is loaded from cache
+            if ((entry.transferSize && entry.transferSize < entry.encodedBodySize) || entry.responseStart === entry.responseEnd) {
+                return;
+            }
 
-                for (j = 0; j < blacklist.length; j += 1) {
-                    blacklistItem = blacklist[j];
-                    switch (typeof blacklistItem) {
-                    case "object":
-                        if (!blacklistItem.cRegex) {
-                            blacklistItem.cRegex = new RegExp(blacklistItem.regex, blacklistItem.flags);
-                        }
-                        blacklistItem.cRegex.lastIndex = 0;
-                        if (blacklistItem.cRegex.test(name)) {
-                            isBlacklisted = true;
-                        }
-                        break;
-                    case "string":
-                        if (name.indexOf(blacklistItem) !== -1) {
-                            isBlacklisted = true;
-                        }
-                        break;
-                    default:
-                        break;
+            if (performanceAlertCfg.resourceTypes.length > 0 && performanceAlertCfg.resourceTypes.indexOf(type) === -1) {
+                return;
+            }
+
+            isBlacklisted = false;
+
+            for (i = 0; i < blacklist.length; i += 1) {
+                blacklistItem = blacklist[i];
+                switch (typeof blacklistItem) {
+                case "object":
+                    if (!blacklistItem.cRegex) {
+                        blacklistItem.cRegex = new RegExp(blacklistItem.regex, blacklistItem.flags);
                     }
+                    blacklistItem.cRegex.lastIndex = 0;
+                    if (blacklistItem.cRegex.test(name)) {
+                        isBlacklisted = true;
+                    }
+                    break;
+                case "string":
+                    if (name.indexOf(blacklistItem) !== -1) {
+                        isBlacklisted = true;
+                    }
+                    break;
+                default:
+                    break;
+                }
+            }
+
+            if (!isBlacklisted) {
+                alertCount += 1;
+
+                resourceData = {
+                    urlNormalized: (context.normalizeUrl ? context.normalizeUrl(name) : name),
+                    url: name,
+                    initiator: type,
+                    duration: Math.round(entry.duration),
+                    responseEnd: Math.round(entry.responseEnd)
+                };
+
+                if (typeof entry.transferSize !== "undefined") {
+                    //transferSize represents the size in octets - (8-bits)
+                    resourceData.transferSize = entry.transferSize;
+                    resourceData.bps = Math.round(entry.transferSize / entry.duration * 1000);
                 }
 
-                if (!isBlacklisted && entry.duration > performanceAlertCfg.threshold) {
-                    performanceAlert.push({
-                        resourceType: type,
-                        name:  name,
-                        duration: entry.duration,
-                        transferSize: entry.transferSize
-                    });
-                }
+                context.post({
+                    type: 17,
+                    resourceData: resourceData
+                });
             }
         }
 
@@ -11580,11 +11865,13 @@ if (TLT && typeof TLT.addModule === "function") {
             }
 
             performanceObserver = new window.PerformanceObserver(function (list, obs) {
-                processPerformanceEntries(list.getEntries());
+                utils.forEach(list.getEntries(), processPerformanceEntry);
             });
 
             oldEntries = window.performance.getEntriesByType("resource");
-            processPerformanceEntries(oldEntries);
+            setTimeout(function () {
+                utils.forEach(oldEntries, processPerformanceEntry);
+            });
 
             performanceObserver.observe({entryTypes: ["resource"]});
         }
@@ -11614,14 +11901,6 @@ if (TLT && typeof TLT.addModule === "function") {
                     clearInterval(perfTimerId);
                     perfTimerId = null;
                 }
-
-                if (performanceAlert.length > 0) {
-                    context.post({
-                        type: 17,
-                        performanceAlert: performanceAlert
-                    });
-                }
-                performanceAlert = [];
 
                 if (performanceObserver) {
                     performanceObserver.disconnect();
@@ -11734,8 +12013,6 @@ TLT.addModule("replay", function (context) {
         scrollViewStart = null,
         scrollViewEnd = null,
         nextScrollViewStart = null,
-        viewPortXStart = 0,
-        viewPortYStart = 0,
         lastFocusEvent = { inFocus: false },
         lastClickEvent = null,
         replayConfig = context.getConfig() || {},
@@ -11756,7 +12033,8 @@ TLT.addModule("replay", function (context) {
         mousemoveLimit = 1000,
         maxInactivity = 0,
         lazyloadingEl = [],
-        pendingQueue = [];
+        pendingQueue = [],
+        currVisibility = document.visibilityState === "visible" ? true : false;
 
     /**
      * Resets the visitedCount of all controls recorded in pastEvents.
@@ -11791,11 +12069,7 @@ TLT.addModule("replay", function (context) {
         case "input":
             // Clicks are relevant for button type inputs only.
             subType = "|" + (target.subType || "") + "|";
-            if (clickableInputTypes.indexOf(subType.toLowerCase()) === -1) {
-                clickable = false;
-            } else {
-                clickable = true;
-            }
+            clickable = (clickableInputTypes.indexOf(subType.toLowerCase()) !== -1);
             break;
         case "select":
         case "textarea":
@@ -11924,7 +12198,9 @@ TLT.addModule("replay", function (context) {
             dualSnapshot,
             queryStatus,
             lastStatus,
-            pendingEvent;
+            pendingEvent,
+            config,
+            timerId;
 
         for (i = 0; i < pendingQueue.length; i++) {
             pendingEvent = pendingQueue[i];
@@ -11934,6 +12210,8 @@ TLT.addModule("replay", function (context) {
             dualSnapshot = pendingEvent.delayUntil.dualSnapshot || false;
             queryStatus = findSelector(selector, documents, nodes);
             lastStatus = pendingEvent.lastStatus || false;
+            config = pendingEvent.config || {};
+            timerId = pendingEvent.timerId;
 
             // If exists is true, capture dom only when selector appears.  If false, capture only when it disappears.
             // If dualSnapshot is true, capture dom when selector both appears and disappears.
@@ -11942,7 +12220,7 @@ TLT.addModule("replay", function (context) {
                     (dualSnapshot === true && queryStatus === true && lastStatus === false) ||
                     (dualSnapshot === true && queryStatus === false && lastStatus === true)) {
 
-                context.performDOMCapture(document, { eventOn: true, dcid: pendingEvent.dcid });
+                context.performDOMCapture(document, config);
 
                 if (!dualSnapshot || queryStatus === false) {
                     pendingQueue.splice(i--, 1);
@@ -11950,11 +12228,41 @@ TLT.addModule("replay", function (context) {
                     if (pendingQueue.length === 0) {
                         TLT.registerMutationCallback(mutationDomCapture, false);
                     }
+                    // Snapshot already taken, clear active timer.
+                    if (timerId) {
+                        clearTimeout(timerId);
+                    }
                 }
-                pendingEvent.lastStatus = queryStatus;
-                break;
             }
             pendingEvent.lastStatus = queryStatus;
+        }
+    }
+
+    /**
+     * Force dom capture if mutation did not occur.
+     * @private
+     * @function
+     * @param {String} dcid to force.
+     */
+    function onMutationTimeout(dcid) {
+        var i,
+            pendingEvent,
+            config;
+
+        // Search queue for dcid
+        for (i = 0; i < pendingQueue.length; i += 1) {
+            pendingEvent = pendingQueue[i];
+            config = pendingEvent.config || {};
+
+            if (config.dcid === dcid) {
+
+                context.performDOMCapture(document, config);
+
+                pendingQueue.splice(i--, 1);
+                if (pendingQueue.length === 0) {
+                    TLT.registerMutationCallback(mutationDomCapture, false);
+                }
+            }
         }
     }
 
@@ -11968,7 +12276,9 @@ TLT.addModule("replay", function (context) {
      * @return {string} Returns the unique DOM Capture id.
      */
     function scheduleDOMCapture(root, config, delay) {
-        var dcid = null;
+        var dcid = null,
+            event;
+
         // Sanity check
         if (!root) {
             return dcid;
@@ -11983,9 +12293,18 @@ TLT.addModule("replay", function (context) {
             dcid = "dcid-" + utils.getSerialNumber() + "." + (new Date()).getTime() + "s";
             if (typeof delay === "object") {
                 // Queue event until css selector occurs before capturing dom.
-                pendingQueue.push({dcid: dcid, delayUntil: delay, lastStatus: false});
+                config.dcid = dcid;
+                event = {config: config, delayUntil: delay, lastStatus: false};
+                pendingQueue.push(event);
 
                 TLT.registerMutationCallback(mutationDomCapture, true);
+
+                // If a delay until timeout is specified, set timeout.
+                if (typeof delay.timeout !== "undefined" && delay.timeout >= 0) {
+                    event.timerId = window.setTimeout(function () {
+                        onMutationTimeout(dcid);
+                    }, delay.timeout);
+                }
             } else {
                 window.setTimeout(function () {
                     config.dcid = dcid;
@@ -12112,7 +12431,6 @@ TLT.addModule("replay", function (context) {
             screenview,
             screenviews,
             screenviewsLen,
-            targetScreenview,
             dcScreenviewBlacklist;
 
         // Sanity check
@@ -12306,8 +12624,7 @@ TLT.addModule("replay", function (context) {
      * @return void
      */
     function postEventQueue(queue) {
-        var i = 0,
-            j,
+        var i, j,
             len = queue.length,
             e1,
             e2,
@@ -12438,11 +12755,9 @@ TLT.addModule("replay", function (context) {
      */
     function handleBlur(id, webEvent, doNotConvert) {
         var convertToBlur = false,
-            convertToChange = false,
             dcid,
             lastQueueEvent,
-            targetState,
-            i = 0;
+            targetState;
 
         // Sanity check
         if (!id) {
@@ -12482,7 +12797,6 @@ TLT.addModule("replay", function (context) {
             if (!pastEvents[id].processedChange && pastEvents[id].prevState && !doNotConvert) {
                 // Should this blur be converted to a change event?
                 if (!utils.isEqual(pastEvents[id].prevState, targetState)) {
-                    convertToChange = true;
                     webEvent.type = "change";
                     lastQueueEvent.event.type = webEvent.type;
                     lastQueueEvent.event.tlEvent = getTlEvent(webEvent);
@@ -12568,8 +12882,14 @@ TLT.addModule("replay", function (context) {
         pastEvents[id].focus = lastFocusEvent.dwellStart = Number(new Date());
         pastEvents[id].focusInOffset = viewTimeStart ? lastFocusEvent.dwellStart - Number(viewTimeStart) : -1;
         // prevState is derived on focus or prior blur (if any). If neither of these is available then prevState is derived from the click event.
-        if (webEvent.type === "focus" || (webEvent.type === "click" && !pastEvents[id].prevState)) {
+        if (webEvent.type === "focus") {
             pastEvents[id].prevState = utils.getValue(webEvent, "target.state");
+        } else if (webEvent.type === "click" && !pastEvents[id].prevState) {
+            pastEvents[id].prevState = utils.getValue(webEvent, "target.state");
+            // Set attribute opposite of the current state
+            if (pastEvents[id].prevState && (webEvent.target.subType === "checkbox" || webEvent.target.subType === "radio")) {
+                pastEvents[id].prevState.checked = !pastEvents[id].prevState.checked;
+            }
         }
         pastEvents[id].visitedCount = pastEvents[id].visitedCount + 1 || 1;
         pastEvents[id].webEvent = webEvent;
@@ -12589,7 +12909,6 @@ TLT.addModule("replay", function (context) {
     function checkQueue(id, webEvent) {
         var pendingInteractionPosted = false,
             prevID,
-            prevEventType,
             tmpQueueLength = tmpQueue.length,
             tmpQueueEvent = tmpQueueLength ? tmpQueue[tmpQueueLength - 1] : null;
 
@@ -12599,13 +12918,12 @@ TLT.addModule("replay", function (context) {
         }
 
         prevID = tmpQueueEvent.target.id;
-        prevEventType = tmpQueueEvent.event.type;
 
         // Check if there is a focus, click or change on a different element than one in the tmpQueue
         // Select lists are an exception because the option element can be selected
         if (prevID !== id && tmpQueueEvent.target.tltype !== "selectList") {
             // Is there is a focus, click or change event on another element
-            if (webEvent.type === "focus" || webEvent.type === "click" || webEvent.type === "change" || webEvent.type === "blur") {
+            if (webEvent.type === "focus" || webEvent.type === "click" || webEvent.type === "change" || webEvent.type === "blur" || webEvent.type === "unload") {
                 // Synthetic blur on the previous element
                 handleBlur(prevID);
                 pendingInteractionPosted = true;
@@ -12840,6 +13158,43 @@ TLT.addModule("replay", function (context) {
 
         postUIEvent(orientationChangeEvent);
         currOrientation = newOrientation;
+    }
+
+    /**
+     * Handles the "visibilitychange" event.
+     * It is invoked when the document becomes visible or hidden
+     * then logs the visibility state of the current tab.
+     * @private
+     * @function
+     * @name replay-handleVisibilityChange
+     * @param {object} webEvent A normalized event object per the WebEvent
+     * interface definition.
+     */
+    function handleVisibilityChange(webEvent) {
+        var newVisibility = document.visibilityState === "visible" ? true : false,
+            msg = {
+                type: 4,
+                event: {
+                    type: "visibilitychange"
+                },
+                target: {
+                    prevState: {
+                        visible: currVisibility
+                    },
+                    currState: {
+                        visible: newVisibility
+                    }
+                }
+            },
+            dcid;
+
+        // Add DOM Capture message if configured
+        dcid = addDOMCapture(webEvent.type, webEvent.target);
+        if (dcid) {
+            msg.dcid = dcid;
+        }
+        postUIEvent(msg);
+        currVisibility = newVisibility;
     }
 
     /* TODO: Refactor this to use a well-defined touchState object */
@@ -13082,7 +13437,6 @@ TLT.addModule("replay", function (context) {
             prevTouchState = {},
             // Rotation angle for android devices does not work for all devices/browsers
             rotation = utils.getValue(webEvent, "nativeEvent.rotation", 0) || utils.getValue(webEvent, "nativeEvent.touches[0].webkitRotationAngle", 0),
-            scale = utils.getValue(webEvent, "nativeEvent.scale", 1),
             touchState = null,
             touchEndEvent = {
                 type: 4,
@@ -13254,10 +13608,10 @@ TLT.addModule("replay", function (context) {
                 // These are handled in core-detectScreenviewChange()
                 break;
             case "focus":
-                returnObj = handleFocus(id, webEvent);
+                handleFocus(id, webEvent);
                 break;
             case "blur":
-                returnObj = handleBlur(id, webEvent);
+                handleBlur(id, webEvent);
                 break;
             case "pointerdown":
                 handlePointerClick(id, webEvent);
@@ -13267,19 +13621,19 @@ TLT.addModule("replay", function (context) {
                 break;
             case "click":
                 // Normal click processing
-                returnObj = handleClick(id, webEvent);
+                handleClick(id, webEvent);
                 break;
             case "change":
-                returnObj = handleChange(id, webEvent);
+                handleChange(id, webEvent);
                 break;
             case "orientationchange":
-                returnObj = handleOrientationChange(webEvent);
+                handleOrientationChange(webEvent);
                 break;
             case "touchstart":
                 handleTouchStart(webEvent);
                 break;
             case "touchend":
-                returnObj = handleTouchEnd(webEvent);
+                handleTouchEnd(webEvent);
                 break;
             case "loadWithFrames":
                 TLT.logScreenviewLoad("rootWithFrames");
@@ -13296,15 +13650,15 @@ TLT.addModule("replay", function (context) {
                 * certain Android devices do not adhere to the standards.
                 * e.g. Some tablets report portrait orientation = 90 and landscape = 0
                 */
-                if (typeof window.orientation !== "number" || utils.isAndroid) {
-                    // Use screen.width/height to determine orientation if window.orientation does not match
+                if (typeof utils.getOrientationAngle() !== "number" || utils.isAndroid) {
+                    // Use screen.width/height to determine orientation if utils.getOrientationAngle() does not match
                     screenOrientation = (window.screen.width > window.screen.height ? 90 : 0);
-                    orientation = window.orientation;
-                    if (Math.abs(orientation) !== screenOrientation && !(orientation === 180 && screenOrientation === 0)) {
+                    orientation = utils.getOrientationAngle();
+                    if (Math.abs(orientation) !== screenOrientation && !(orientation === 180 && screenOrientation === 0) && !(orientation === 270 && screenOrientation === 90)) {
                         utils.isLandscapeZeroDegrees = true;
                         if (Math.abs(orientation) === 180 || Math.abs(orientation) === 0) {
                             currOrientation = 90;
-                        } else if (Math.abs(orientation) === 90) {
+                        } else if (Math.abs(orientation) === 90 || Math.abs(orientation) === 270) {
                             currOrientation = 0;
                         }
                     }
@@ -13383,19 +13737,15 @@ TLT.addModule("replay", function (context) {
                         TLT.normalizeUrl(location.hash) === rootScreenviewName) {
                     TLT.logScreenviewUnload(rootScreenviewName);
                 }
-
-                try {
-                    if (sessionStorage) {
-                        sessionStorage.setItem("tltUnload", 1);
-                    }
-                } catch (e) {
-                }
                 break;
             case "mousemove":
                 handleMousemove(webEvent);
                 break;
             case "error":
                 handleError(webEvent);
+                break;
+            case "visibilitychange":
+                handleVisibilityChange(webEvent);
                 break;
             default:
                 // Call the default handler for all other DOM events
@@ -13410,3 +13760,4 @@ TLT.addModule("replay", function (context) {
         }
     };
 });
+
